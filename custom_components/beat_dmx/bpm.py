@@ -30,6 +30,16 @@ def _norm(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", text).strip()
 
 
+def _main_artist(artist: str) -> str:
+    """Searches find nothing with every artist listed ("Calvin Harris, Dua Lipa" -> "Calvin Harris")."""
+    return re.split(r",| & | feat\.? | ft\.? | x ", artist, flags=re.I)[0].strip() or artist
+
+
+def _bare_title(title: str) -> str:
+    """"Levels - Radio Edit" -> "Levels"."""
+    return re.split(r" - |\(|\[", title)[0].strip() or title
+
+
 def _same_artist(found: str, wanted: str) -> bool:
     """MA may list several artists ("calvin harris dua lipa"); Deezer gives the main one."""
     return bool(found) and (wanted.startswith(found) or found.startswith(wanted))
@@ -88,7 +98,7 @@ class BpmLookup:
         if not self._key or not artist:
             return None
         data = await self._get(GETSONGBPM, api_key=self._key, type="both",
-                               lookup=f"song:{title} artist:{artist}")
+                               lookup=f"song:{_bare_title(title)} artist:{_main_artist(artist)}")
         results = data.get("search")
         if not isinstance(results, list):
             return None
@@ -102,7 +112,7 @@ class BpmLookup:
         """Median BPM over the releases whose artist and title match (Deezer only fills bpm on some)."""
         if not artist:
             return None
-        data = await self._get(f"{DEEZER}/search", q=f"{artist} {title}", limit=15)
+        data = await self._get(f"{DEEZER}/search", q=f"{_main_artist(artist)} {_bare_title(title)}", limit=15)
         want_title, want_artist = _norm(title), _norm(artist)
         candidates = [(_tier(t.get("title", "")), t["id"]) for t in data.get("data", [])
                       if _norm(t.get("title", "")) == want_title
