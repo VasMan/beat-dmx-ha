@@ -63,6 +63,10 @@ The integration serves a dashboard card that shows the DMX values going out to e
 
 ```yaml
 type: custom:beat-dmx-card
+fixtures:            # optional: show these first, in this order
+  - light.right_beam_ch
+  - light.left_beam_ch
+layout: stacked      # optional: fixtures under each other instead of side by side
 ```
 
 No Lovelace resource is needed; the card is loaded automatically.

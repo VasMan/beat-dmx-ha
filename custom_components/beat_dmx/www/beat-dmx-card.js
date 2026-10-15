@@ -1,5 +1,7 @@
 // Beat DMX live view: the DMX values going out to each fixture Beat DMX controls, pushed ~10x/s
 // over the websocket (beat_dmx/subscribe). Channel meanings: BeamZ Panther 40 LED Spot, 11-channel mode.
+// Options: fixtures: [prefix, ...] shows those fixtures in that order (others after them);
+//          layout: stacked puts the fixtures under each other instead of side by side.
 
 const range = (v, table) => {
   for (const [hi, text] of table) if (v <= hi) return typeof text === "function" ? text(v) : text;
@@ -102,6 +104,7 @@ class BeatDmxCard extends HTMLElement {
         .beats i.lit { background: var(--bd-accent); box-shadow: 0 0 8px var(--bd-accent); }
         .track { margin: 6px 0 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .fixtures { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+        .fixtures.stacked { grid-template-columns: 1fr; }
         .fx { border: 1px solid var(--divider-color, #333); border-radius: 12px; padding: 12px; }
         .fx h3 { margin: 0 0 10px; font-size: 15px; font-weight: 500; display: flex; gap: 8px; align-items: center; }
         .fx h3 span { color: var(--bd-muted); font-size: 12px; font-weight: 400; }
@@ -161,12 +164,27 @@ class BeatDmxCard extends HTMLElement {
     e.credit.hidden = !String(d.source || "").startsWith("getsongbpm");
     e.track.textContent = `${song}${d.player ? ` · ${d.player}` : ""} · tempo: ${d.source}`;
 
-    if (this._fx.length !== d.fixtures.length) this._buildFixtures(d.fixtures);
-    d.fixtures.forEach((f, i) => this._updateFixture(this._fx[i], f));
+    const fixtures = this._ordered(d.fixtures);
+    const sig = fixtures.map((f) => f.prefix).join();
+    if (sig !== this._sig) {
+      this._sig = sig;
+      this._buildFixtures(fixtures);
+    }
+    fixtures.forEach((f, i) => this._updateFixture(this._fx[i], f));
+  }
+
+  _ordered(fixtures) {
+    const order = this._config.fixtures || [];
+    const rank = (f) => {
+      const i = order.findIndex((o) => o === f.prefix || o === f.name);
+      return i < 0 ? order.length : i;
+    };
+    return [...fixtures].sort((a, b) => rank(a) - rank(b));
   }
 
   _buildFixtures(fixtures) {
     this._els.fixtures.innerHTML = "";
+    this._els.fixtures.classList.toggle("stacked", this._config.layout === "stacked");
     this._fx = fixtures.map((f) => {
       const el = document.createElement("div");
       el.className = "fx";

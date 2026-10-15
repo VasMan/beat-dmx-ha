@@ -18,7 +18,7 @@ from .engine import BeatEngine
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 CARD_URL = f"/{DOMAIN}/beat-dmx-card.js"
-CARD_VERSION = 2
+CARD_VERSION = 3
 
 PLATFORMS = [Platform.SWITCH, Platform.SENSOR, Platform.SELECT, Platform.NUMBER, Platform.BUTTON]
 
