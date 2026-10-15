@@ -6,7 +6,9 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import BeatConfigEntry
-from .const import COLOUR_MIX, COLOUR_MODES, COLOUR_WHEEL, PROGRAMS, SPEEDS, STROBE_PROGRAM_COLOUR
+from .analysis import SECTIONS
+from .const import (COLOUR_MIX, COLOUR_MODES, COLOUR_WHEEL, PEAK_ACTIONS, PROGRAMS, SECTION_ACTIONS, SPEEDS,
+                    STROBE_PROGRAM_COLOUR)
 from .entity import BeatEntity
 from .motion import COORDINATION, MIX, SHAPES
 
@@ -19,7 +21,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: BeatConfigEntry, add: Ad
          BeatSelect(engine, "coordination", "Coordination", [*COORDINATION, MIX], "mdi:account-multiple"),
          BeatSelect(engine, "colour_mode", "Colours", [*COLOUR_MODES, COLOUR_MIX], "mdi:palette"),
          BeatSelect(engine, "strobe_colour", "Strobe colour", [STROBE_PROGRAM_COLOUR, *(n for n, _ in COLOUR_WHEEL)],
-                    "mdi:flash-outline")])
+                    "mdi:flash-outline"),
+         BeatSelect(engine, "peak_action", "Section: Peaks", PEAK_ACTIONS, "mdi:chart-bell-curve"),
+         *(SectionSelect(engine, s) for s in SECTIONS)])
 
 
 class BeatSelect(BeatEntity, SelectEntity):
@@ -35,3 +39,20 @@ class BeatSelect(BeatEntity, SelectEntity):
 
     async def async_select_option(self, option: str) -> None:
         self.engine.set(self._key, option)
+
+
+class SectionSelect(BeatEntity, SelectEntity):
+    """What one section of a track does under Section show."""
+    _attr_options = SECTION_ACTIONS
+    _attr_icon = "mdi:chart-timeline-variant"
+
+    def __init__(self, engine, section: str) -> None:
+        super().__init__(engine, f"section_{section.lower().replace(' ', '_').replace('-', '_')}", f"Section: {section}")
+        self._section = section
+
+    @property
+    def current_option(self) -> str:
+        return self.engine.section_actions.get(self._section, "No change")
+
+    async def async_select_option(self, option: str) -> None:
+        self.engine.set("section_actions", {**self.engine.section_actions, self._section: option})

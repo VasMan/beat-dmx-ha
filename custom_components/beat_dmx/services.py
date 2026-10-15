@@ -26,6 +26,9 @@ def _engine(hass: HomeAssistant):
     return entry.runtime_data
 
 
+ANALYSE_FOLDER = vol.Schema({vol.Optional("folder"): cv.string, vol.Optional("full", default=False): cv.boolean})
+
+
 @callback
 def async_register(hass: HomeAssistant) -> None:
     def _call(fn):
@@ -41,3 +44,15 @@ def async_register(hass: HomeAssistant) -> None:
         lambda e, d: e.set_channel(d["fixture"], d["channel"], d["value"])), SET_CHANNEL)
     hass.services.async_register(DOMAIN, "calibrate", _call(
         lambda e, d: e.calibrate(d["fixture"], d["point"])), CALIBRATE)
+
+    @callback
+    def analyse(call: ServiceCall) -> None:
+        engine = _engine(hass)
+        folder = call.data.get("folder") or engine.music_folder
+        if not folder:
+            raise ServiceValidationError("No folder given and no music folder set in the Beat DMX options")
+        if engine.scan["running"]:
+            raise ServiceValidationError("An analysis is already running")
+        hass.async_create_background_task(engine.analyse_folder(folder, call.data["full"]), f"{DOMAIN} analyse")
+
+    hass.services.async_register(DOMAIN, "analyse_folder", analyse, ANALYSE_FOLDER)

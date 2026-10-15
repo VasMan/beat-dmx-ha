@@ -36,3 +36,13 @@ calibrate:
             - go_up
             - go_level
             - go_left
+analyse_folder:
+  fields:
+    folder:
+      example: /media/Music
+      selector:
+        text:
+    full:
+      default: false
+      selector:
+        boolean:

@@ -80,6 +80,11 @@ const tempoStatus = (source) => {
   return { text: hit[1] + (/live takes only/.test(s) ? " – live versions only, may be off" : ""), cls: hit[2] };
 };
 
+// Section show: the colour of each section on the timeline
+const SECTION_COLOURS = { Intro: "#78909c", Main: "#42a5f5", Breakdown: "#ab47bc", "Build-up": "#ffa726",
+  "Quiet gap": "#212121", Drop: "#ef5350", Outro: "#78909c" };
+const mmss = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}`;
+
 const SEND_MS = 150; // manual DMX: at most one message per fixture this often while dragging
 const HOLD_MS = 600; // and the slider is left alone for this long after it was moved
 
@@ -119,6 +124,8 @@ class BeatDmxCard extends HTMLElement {
     this._unsub = null;
     if (this._beatTimer) clearInterval(this._beatTimer);
     this._beatTimer = null;
+    if (this._tlTimer) clearInterval(this._tlTimer);
+    this._tlTimer = null;
   }
 
   getCardSize() {
@@ -255,6 +262,12 @@ class BeatDmxCard extends HTMLElement {
         .credit { margin-top: 10px; font-size: 11px; color: var(--bd-muted); text-align: right; }
         .credit a { color: inherit; }
         .err { color: var(--error-color, #f44336); font-size: 13px; margin: 0 0 10px; }
+        .tl { margin: 0 0 14px; }
+        .tlhead { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; margin-bottom: 4px; }
+        .tlhead #tlsrc { color: var(--bd-muted); font-size: 12px; }
+        .tl canvas { width: 100%; height: 56px; display: block; border-radius: 6px; background: var(--bd-track); }
+        .tlkey { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11px; color: var(--bd-muted); margin-top: 4px; }
+        .tlkey i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
         @media (max-width: 420px) { .row { grid-template-columns: 62px 26px 1fr 28px; } .row .txt { display: none; } }
       </style>
       <ha-card>
@@ -272,6 +285,11 @@ class BeatDmxCard extends HTMLElement {
           <dt>Playing</dt><dd id="track"></dd>
           <dt>Show</dt><dd id="show"></dd>
         </dl>
+        <div class="tl" id="tl" hidden>
+          <div class="tlhead"><span id="tlnow"></span><span id="tlsrc"></span></div>
+          <canvas id="tlc" height="56"></canvas>
+          <div class="tlkey" id="tlkey"></div>
+        </div>
         <div class="err" id="err" hidden></div>
         <div class="fixtures" id="fixtures"></div>
         <div class="credit" id="credit" hidden>Tempo data provided by
@@ -288,7 +306,11 @@ class BeatDmxCard extends HTMLElement {
     }));
     this._els = { card: root.querySelector("ha-card"), state: $("state"), manual: $("manual"), bpm: $("bpm"),
       found: $("found"), track: $("track"), show: $("show"), beats: [...$("beats").children],
-      fixtures: $("fixtures"), credit: $("credit"), err: $("err") };
+      fixtures: $("fixtures"), credit: $("credit"), err: $("err"),
+      tl: $("tl"), tlnow: $("tlnow"), tlsrc: $("tlsrc"), tlc: $("tlc"), tlkey: $("tlkey") };
+    $("tlkey").innerHTML = Object.entries(SECTION_COLOURS).filter(([k]) => k !== "Outro")
+      .map(([k, c]) => `<span><i style="background:${c}"></i>${k === "Intro" ? "Intro/outro" : k}</span>`).join("") +
+      '<span><i style="background:#fff"></i>Peak</span>';
     this._els.manual.addEventListener("click", () => this._safe(() => this._toggleManual()));
     root.getElementById("title").textContent = this._config.title || "Live DMX";
     this._fx = [];
@@ -330,6 +352,7 @@ class BeatDmxCard extends HTMLElement {
       (d.strobe ? ` · STROBE (${d.strobe_colour === "Program colour" ? "program colour" : d.strobe_colour})` : "") +
       (d.zone ? ` · zone ±${Math.round(d.zone.width)}°, ${Math.round(d.zone.low)}–${Math.round(d.zone.high)}° up` : "");
     e.credit.hidden = !String(d.source || "").startsWith("getsongbpm");
+    this._renderSection(d);
 
     const fixtures = this._ordered(d.fixtures);
     const sig = fixtures.map((f) => f.prefix).join();
@@ -338,6 +361,68 @@ class BeatDmxCard extends HTMLElement {
       this._buildFixtures(fixtures);
     }
     fixtures.forEach((f, i) => this._updateFixture(this._fx[i], f, d.manual));
+  }
+
+  // ---- section timeline ------------------------------------------------------------------
+  _renderSection(d) {
+    const e = this._els, sec = d.section;
+    e.tl.hidden = !sec;
+    if (!sec) return;
+    // the curve and sections are fetched once per track (and again when MA's analysis arrives)
+    const tlKey = `${sec.id}|${sec.source}`;
+    if (tlKey !== this._tlKey) {
+      this._tlKey = tlKey;
+      this._tl = null;
+      this._hass.connection.sendMessagePromise({ type: "beat_dmx/timeline" })
+        .then((tl) => this._safe(() => { if (this._tlKey === tlKey) { this._tl = tl; this._drawTimeline(); } }))
+        .catch((err) => this._toast(err));
+    }
+    this._sec = sec;
+    this._secAt = performance.now();
+    if (!sec.source) {
+      e.tlnow.textContent = "Not analysed yet – the normal show runs";
+      e.tlsrc.textContent = "";
+    } else {
+      e.tlnow.textContent = `${d.section_show ? "" : "(Section show off) "}Section: ${sec.type || "–"}${sec.peak ? " · PEAK" : ""}` +
+        (sec.next ? ` · ${sec.next} in ${Math.max(0, Math.round(sec.next_in))} s` : "");
+      e.tlsrc.textContent = sec.source === "file" ? "analysed from the file (with bass)" : "from Music Assistant's analysis";
+    }
+    if (!this._tlTimer) this._tlTimer = setInterval(() => this._safe(() => this._drawTimeline()), 250);
+  }
+
+  _drawTimeline() {
+    const tl = this._tl, c = this._els && this._els.tlc;
+    if (!c || !tl || !tl.duration) return;
+    const w = Math.max(100, Math.round(c.clientWidth || 600)), h = 56, dpr = window.devicePixelRatio || 1;
+    if (c.width !== w * dpr) { c.width = w * dpr; c.height = h * dpr; }
+    const g = c.getContext("2d");
+    if (!g) return;
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, w, h);
+    const X = (t) => (t / tl.duration) * w;
+    (tl.sections || []).forEach((s) => {
+      g.fillStyle = SECTION_COLOURS[s.type] || "#888";
+      g.globalAlpha = 0.45;
+      g.fillRect(X(s.start), 0, Math.max(1, X(s.end) - X(s.start)), h);
+    });
+    g.globalAlpha = 1;
+    const curve = tl.timeline || [];
+    if (curve.length) {
+      g.beginPath();
+      curve.forEach((v, i) => { const x = (i / curve.length) * w, y = h - (Math.min(v, 255) / 255) * (h - 4); i ? g.lineTo(x, y) : g.moveTo(x, y); });
+      g.lineTo(w, h); g.lineTo(0, h); g.closePath();
+      g.fillStyle = "rgba(255,255,255,0.35)";
+      g.fill();
+    }
+    g.fillStyle = "#fff";
+    (tl.peaks || []).forEach(([a]) => g.fillRect(X(a), 0, 2, 6));
+    const sec = this._sec;
+    if (sec && sec.t != null) {
+      const t = sec.t + (performance.now() - this._secAt) / 1000;
+      g.fillStyle = "#fff";
+      g.fillRect(Math.min(w - 2, X(t)), 0, 2, h);
+      this._els.tlsrc.title = `${mmss(t)} / ${mmss(tl.duration)}`;
+    }
   }
 
   _tickBeat() {

@@ -79,6 +79,24 @@ Then Settings → Devices & services → Add integration → **Beat DMX**, and e
 | Zone width, Lowest / Highest beam angle (numbers) | the movement zone |
 | Tap tempo (button) | 4+ taps set the tempo for the track; every tap re-aligns the beat |
 
+## Section show (build-ups, drops, peaks)
+
+Beat DMX knows the sections of a track before they play: Intro, Main, Breakdown, Build-up, Quiet gap
+(the near-silence just before a drop), Drop and Outro, plus short Peaks. With **Section show** on, each
+section can keep the main program, run another program, strobe over it or go dark; peaks can strobe
+or go dark, every drop starts with a strobe burst (*Drop strobe beats*), and the step speed doubles
+through a build-up. An event `beat_dmx_section` fires on every change, for automations.
+
+Where the sections come from:
+
+1. **Your own files** (best: overall and bass energy every 0.1 s, made with ffmpeg). Set a *Music
+   folder* in the Beat DMX options (e.g. a NAS share added under Settings > System > Storage as
+   *Media*) or call `beat_dmx.analyse_folder`; new and changed files are analysed at every start.
+   A track is found by artist and title, so a streamed copy of a song you also have as a file uses
+   the file's analysis.
+2. **Music Assistant's waveform** (overall loudness only), once MA has analysed the track.
+3. Neither (internet radio): the normal show runs.
+
 ## Live DMX card
 
 The integration serves a dashboard card that shows the DMX values going out to each fixture, live:
@@ -98,6 +116,7 @@ and with Manual DMX on its bars become sliders, the pan/tilt pad can be dragged 
 ## Services
 
 - `beat_dmx.set_channel` (fixture, channel 1-11, value 0-255): manual DMX (turns Manual DMX on)
+- `beat_dmx.analyse_folder` (folder, full): analyse the audio files under a folder for Section show
 - `beat_dmx.calibrate` (fixture, point: `up`, `level`, `reverse_pan`, `reset`; `go_up`, `go_level`, `go_left` aim the head for the calibration steps)
 
 ## Notes

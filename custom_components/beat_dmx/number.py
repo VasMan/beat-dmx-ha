@@ -13,6 +13,7 @@ NUMBERS = [
     # key, name, min, max, step, unit, icon, config
     ("intensity", "Intensity", 0, 100, 1, "%", "mdi:brightness-6", False),
     ("bpm_override", "Tempo override", 0, 220, 1, "BPM", "mdi:metronome", False),
+    ("drop_burst_beats", "Drop strobe beats", 0, 16, 1, None, "mdi:flash-alert", False),
     ("zone_width", "Zone width", 0, 170, 1, "°", "mdi:pan-horizontal", True),
     ("zone_low", "Lowest beam angle", 0, 90, 1, "°", "mdi:angle-acute", True),
     ("zone_high", "Highest beam angle", 0, 90, 1, "°", "mdi:angle-obtuse", True),

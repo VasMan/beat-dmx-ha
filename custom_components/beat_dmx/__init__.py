@@ -12,7 +12,8 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.typing import ConfigType
 
 from . import services, websocket
-from .const import (CONF_DEFAULT_BPM, CONF_FIXTURES, CONF_GETSONGBPM_KEY, DEFAULT_BPM, DEFAULT_FIXTURES,
+from .const import (CONF_DEFAULT_BPM, CONF_FIXTURES, CONF_GETSONGBPM_KEY, CONF_MUSIC_FOLDER, DEFAULT_BPM,
+                    DEFAULT_FIXTURES,
                     DOMAIN)
 from .engine import BeatEngine
 
@@ -22,7 +23,7 @@ CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 # the card is copied to <config>/www/beat_dmx/ and loaded as a Lovelace resource: both exist from the
 # moment Home Assistant starts, so a dashboard opened during start-up still finds the card
 CARD_URL = f"/local/{DOMAIN}/beat-dmx-card.js"
-CARD_VERSION = 11
+CARD_VERSION = 12
 
 PLATFORMS = [Platform.SWITCH, Platform.SENSOR, Platform.SELECT, Platform.NUMBER, Platform.BUTTON]
 
@@ -70,7 +71,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: BeatConfigEntry) -> bool
         hass,
         fixtures=str(conf.get(CONF_FIXTURES, DEFAULT_FIXTURES)).split(","),
         getsongbpm_key=conf.get(CONF_GETSONGBPM_KEY, "").strip(),
-        default_bpm=float(conf.get(CONF_DEFAULT_BPM, DEFAULT_BPM)))
+        default_bpm=float(conf.get(CONF_DEFAULT_BPM, DEFAULT_BPM)),
+        music_folder=str(conf.get(CONF_MUSIC_FOLDER, "")))
     entry.runtime_data = engine
     await engine.async_start()
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)

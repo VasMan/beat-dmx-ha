@@ -31,3 +31,11 @@ STROBE_SLOW, STROBE_FAST = 16, 131
 PT_SPEED_FAST = 0
 FUNCTION_NONE = 0
 DIM_MODE_STANDARD = 0
+
+# Section show: what each section of a track does - the main program ("No change"), another program,
+# a strobe over the main program, or dark
+SECTION_ACTIONS = ["No change", *PROGRAMS, "Strobe", "Dark"]
+PEAK_ACTIONS = ["No change", "Strobe", "Dark"]
+DEFAULT_SECTION_ACTIONS = {"Intro": "No change", "Main": "No change", "Breakdown": "Colour & gobo",
+                           "Build-up": "Pulse", "Quiet gap": "Dark", "Drop": "Full show", "Outro": "No change"}
+CONF_MUSIC_FOLDER = "music_folder"

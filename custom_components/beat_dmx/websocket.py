@@ -16,6 +16,7 @@ PUSH_SECONDS = 0.2  # (the card animates the beat itself; fewer frames for table
 def async_register(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_subscribe)
     websocket_api.async_register_command(hass, ws_set_channels)
+    websocket_api.async_register_command(hass, ws_timeline)
 
 
 def _engine(hass: HomeAssistant):
@@ -31,8 +32,9 @@ async def ws_subscribe(hass: HomeAssistant, connection: websocket_api.ActiveConn
         while True:
             engine = _engine(hass)
             data = engine.live() if engine else {"error": "Beat DMX is not loaded"}
-            # (the beat moves on every time; it alone is no reason to send - the card counts beats itself)
-            same = {**data, "beat": None} == {**(last or {}), "beat": None}
+            # (the beat and the track position move on all the time; that alone is no reason to send -
+            # the card counts them on itself)
+            same = _still(data) == _still(last or {})
             if not same:
                 connection.send_message(websocket_api.event_message(msg["id"], data))
                 last = data
@@ -41,6 +43,19 @@ async def ws_subscribe(hass: HomeAssistant, connection: websocket_api.ActiveConn
     task = hass.async_create_background_task(_push(), f"{DOMAIN} live push")
     connection.subscriptions[msg["id"]] = task.cancel
     connection.send_result(msg["id"])
+
+
+def _still(data: dict) -> dict:
+    sec = data.get("section")
+    return {**data, "beat": None, "section": {**sec, "t": None, "next_in": None} if sec else sec}
+
+
+@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/timeline"})
+@callback
+def ws_timeline(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """The playing track's energy curve and sections, for drawing (fetched when the track changes)."""
+    engine = _engine(hass)
+    connection.send_result(msg["id"], engine.analysis if engine else None)
 
 
 @websocket_api.websocket_command({

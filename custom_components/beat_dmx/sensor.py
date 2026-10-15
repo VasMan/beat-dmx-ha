@@ -13,7 +13,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: BeatConfigEntry, add: Ad
     engine = entry.runtime_data
     add([BpmSensor(engine, "bpm", "Tempo"), TrackSensor(engine, "track", "Now following"),
          NowSensor(engine, "coord_now", "Coordination now", "mdi:account-multiple"),
-         NowSensor(engine, "colour_now", "Colours now", "mdi:palette")])
+         NowSensor(engine, "colour_now", "Colours now", "mdi:palette"),
+         SectionSensor(engine, "section", "Section"), AnalysedSensor(engine, "analysed", "Analysed tracks")])
 
 
 class BpmSensor(BeatEntity, SensorEntity):
@@ -57,3 +58,38 @@ class NowSensor(BeatEntity, SensorEntity):
     @property
     def native_value(self) -> str:
         return getattr(self.engine, self._key)
+
+
+class SectionSensor(BeatEntity, SensorEntity):
+    """The section of the playing track (from its analysis); attributes say what comes next."""
+    _attr_icon = "mdi:chart-timeline-variant"
+
+    @property
+    def native_value(self) -> str | None:
+        live = self.engine._section_live()
+        if not live:
+            return None
+        if not live["source"]:
+            return "Not analysed"
+        return live["type"] or "–"
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        live = self.engine._section_live() or {}
+        a = self.engine.analysis or {}
+        return {"source": live.get("source"), "next": live.get("next"),
+                "sections": [f"{int(s['start'])//60}:{int(s['start'])%60:02d} {s['type']}" for s in a.get("sections") or []]}
+
+
+class AnalysedSensor(BeatEntity, SensorEntity):
+    """How many tracks have a local analysis, and how the folder scan is getting on."""
+    _attr_icon = "mdi:folder-music"
+    _attr_native_unit_of_measurement = "tracks"
+
+    @property
+    def native_value(self) -> int:
+        return len(self.engine.library.by_key) if self.engine.library else 0
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        return {**self.engine.scan, "music_folder": self.engine.music_folder or None}

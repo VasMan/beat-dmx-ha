@@ -7,7 +7,8 @@
         "data": {
           "fixtures": "Fixtures (Art-Net light entity prefixes, comma separated; every second one is mirrored)",
           "getsongbpm_api_key": "GetSongBPM API key (optional, improves tempo lookups)",
-          "default_bpm": "Tempo to use when none is found"
+          "default_bpm": "Tempo to use when none is found",
+          "music_folder": "Music folder to analyse (e.g. /media/Music; optional)"
         }
       }
     },
@@ -23,7 +24,8 @@
         "data": {
           "fixtures": "Fixtures (Art-Net light entity prefixes, comma separated; every second one is mirrored)",
           "getsongbpm_api_key": "GetSongBPM API key (optional, improves tempo lookups)",
-          "default_bpm": "Tempo to use when none is found"
+          "default_bpm": "Tempo to use when none is found",
+          "music_folder": "Music folder to analyse (e.g. /media/Music; optional)"
         }
       }
     }
@@ -58,6 +60,20 @@
         "point": {
           "name": "Point",
           "description": "up, level, reverse_pan, reset, go_up, go_level or go_left"
+        }
+      }
+    },
+    "analyse_folder": {
+      "name": "Analyse music folder",
+      "description": "Measure the energy (overall and bass) of every new or changed audio file under the folder, so Section show knows each track's sections before it plays.",
+      "fields": {
+        "folder": {
+          "name": "Folder",
+          "description": "Defaults to the music folder in the Beat DMX options"
+        },
+        "full": {
+          "name": "Analyse everything again",
+          "description": "Also files that were analysed before"
         }
       }
     }

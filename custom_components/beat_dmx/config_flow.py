@@ -7,7 +7,8 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.core import callback
 
-from .const import CONF_DEFAULT_BPM, CONF_FIXTURES, CONF_GETSONGBPM_KEY, DEFAULT_BPM, DEFAULT_FIXTURES, DOMAIN
+from .const import (CONF_DEFAULT_BPM, CONF_FIXTURES, CONF_GETSONGBPM_KEY, CONF_MUSIC_FOLDER, DEFAULT_BPM,
+                    DEFAULT_FIXTURES, DOMAIN)
 
 
 def _schema(conf: dict) -> vol.Schema:
@@ -16,6 +17,7 @@ def _schema(conf: dict) -> vol.Schema:
         vol.Optional(CONF_GETSONGBPM_KEY, default=conf.get(CONF_GETSONGBPM_KEY, "")): str,
         vol.Required(CONF_DEFAULT_BPM, default=conf.get(CONF_DEFAULT_BPM, DEFAULT_BPM)):
             vol.All(vol.Coerce(int), vol.Range(min=40, max=220)),
+        vol.Optional(CONF_MUSIC_FOLDER, default=conf.get(CONF_MUSIC_FOLDER, "")): str,
     })
 
 

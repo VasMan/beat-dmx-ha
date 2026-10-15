@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import os
 import random
 import time
 from collections.abc import Callable
@@ -14,10 +15,12 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.storage import Store
 
+from .analysis import SECTIONS, Library, find_sections, ma_profile, section_at, timeline
 from .bpm import BpmLookup, track_key
 from .const import (CH_COLOUR, CH_DIM_MODE, CH_DIMMER, CH_FUNCTION, CH_GOBO, CH_PAN, CH_PAN_FINE,
                     CH_PT_SPEED, CH_SHUTTER, CH_TILT, CH_TILT_FINE, CHANNEL_COUNT, COLOUR_MIX, COLOUR_MODES,
-                    COLOUR_OFFSET, COLOUR_WHEEL, COLOURS, SILENCE_SECONDS, STROBE_PROGRAM_COLOUR,
+                    COLOUR_OFFSET, COLOUR_WHEEL, COLOURS, DEFAULT_SECTION_ACTIONS, SILENCE_SECONDS,
+                    STROBE_PROGRAM_COLOUR,
                     DIM_MODE_STANDARD, DOMAIN, FUNCTION_NONE, GOBOS, PROGRAMS, PT_SPEED_FAST, SHUTTER_OPEN,
                     SPEEDS, STROBE_FAST, STROBE_SLOW)
 from .motion import COORDINATION, DEFAULT_CAL, MIX, MIX_SECONDS, SHAPES, aim_to_dmx, zone_point, zone_to_angles
@@ -29,6 +32,7 @@ FPS = 25
 TAP_RESET_SECONDS = 2.0
 SETTINGS = ("enabled", "program", "speed", "intensity", "bpm_override", "shape", "coordination", "colour_mode",
             "blackout", "blackout_on_silence", "strobe", "strobe_colour",
+            "section_show", "section_actions", "peak_action", "drop_burst_beats",
             "zone_width", "zone_low", "zone_high", "calibration")
 
 
@@ -38,6 +42,8 @@ class NowPlaying:
     artist: str = ""
     title: str = ""
     isrc: str | None = None
+    mapping: dict | None = None  # Music Assistant provider mapping of the item (for its waveform)
+    duration: float = 0.0
 
     @property
     def key(self) -> str:
@@ -60,7 +66,8 @@ class Fixture:
 
 
 class BeatEngine:
-    def __init__(self, hass: HomeAssistant, fixtures: list[str], getsongbpm_key: str, default_bpm: float) -> None:
+    def __init__(self, hass: HomeAssistant, fixtures: list[str], getsongbpm_key: str, default_bpm: float,
+                 music_folder: str = "") -> None:
         self.hass = hass
         self._store = Store(hass, 1, f"{DOMAIN}.state")
         self._lookup = BpmLookup(async_get_clientsession(hass), {}, getsongbpm_key)
@@ -108,6 +115,18 @@ class BeatEngine:
         self._dark = False  # what the render loop put out last: all zeros or not
         self._lookup_task: asyncio.Task | None = None
 
+        # sections: each one runs a program, the main program, a strobe over it, or goes dark
+        self.section_show = False
+        self.section_actions = dict(DEFAULT_SECTION_ACTIONS)
+        self.peak_action = "Strobe"
+        self.drop_burst_beats = 4.0  # strobe on the first beats of every drop
+        self.music_folder = music_folder.strip()
+        self.library = Library(hass.config.path(DOMAIN, "analysis")) if hass else None
+        self.scan = {"running": False, "done": 0, "total": 0, "current": None, "errors": 0}
+        self.analysis: dict | None = None  # the playing track: {"id", "source", "duration", "sections", "peaks", "timeline"}
+        self._track_t0 = 0.0  # loop time the playing track started (kept in step with Music Assistant)
+        self.section_now: str | None = None
+
     # ---- lifecycle -------------------------------------------------------------------------
     async def async_start(self) -> None:
         saved = await self._store.async_load() or {}
@@ -125,8 +144,12 @@ class BeatEngine:
         if self.strobe_colour not in (STROBE_PROGRAM_COLOUR, *(n for n, _ in COLOUR_WHEEL)):
             self.strobe_colour = STROBE_PROGRAM_COLOUR
         self._silent_since = self.hass.loop.time()
+        self.section_actions = {s: self.section_actions.get(s, DEFAULT_SECTION_ACTIONS[s]) for s in SECTIONS}
         self._lookup.cache.update(saved.get("bpm_cache") or {})
+        await self.hass.async_add_executor_job(self.library.load)
         self._tasks.append(self.hass.async_create_background_task(self._poll_loop(), f"{DOMAIN} poll"))
+        if self.music_folder:
+            self._tasks.append(self.hass.async_create_background_task(self.analyse_folder(), f"{DOMAIN} analyse"))
 
     async def async_stop(self) -> None:
         for task in [*self._tasks, self._render_task, self._lookup_task]:
@@ -320,8 +343,11 @@ class BeatEngine:
         if player.get("elapsed_time_last_updated"):
             position += max(0.0, time.time() - float(player["elapsed_time_last_updated"]))
 
+        loop_now = asyncio.get_running_loop().time()
         if (artist, title) != (self.now.artist, self.now.title):
             self.now = NowPlaying(name, artist, title)
+            self.analysis, self.section_now = None, None
+            self._track_t0 = loop_now - position
             self.tap_bpm = None
             self._taps.clear()
             self.looked_up_bpm, self.bpm_source = None, "looking up"
@@ -332,8 +358,13 @@ class BeatEngine:
             self._lookup_task = self.hass.async_create_background_task(
                 self._lookup_bpm(media.get("queue_id"), self.now), f"{DOMAIN} bpm lookup")
             _LOGGER.info("Following %s on %s", f"{artist} - {title}", name)
-        elif name != self.now.player:
-            self.now.player = name
+        else:
+            if name != self.now.player:
+                self.now.player = name
+            # keep the track position in step (seeks, pauses, the odd hiccup)
+            if abs((loop_now - self._track_t0) - position) > 1.5:
+                self._track_t0 = loop_now - position
+        self.now.duration = float(media.get("duration") or 0)
         self._update_render()
         self._notify()
 
@@ -341,10 +372,14 @@ class BeatEngine:
         if queue_id:
             try:
                 queue = await self._ma("player_queues/get", queue_id=queue_id)
-                ids = (((queue or {}).get("current_item") or {}).get("media_item") or {}).get("external_ids") or []
+                item = ((queue or {}).get("current_item") or {}).get("media_item") or {}
+                ids = item.get("external_ids") or []
                 now.isrc = next((v for k, v in ids if k == "isrc"), None)
+                now.mapping = (item.get("provider_mappings") or [None])[0]
+                now.duration = float(item.get("duration") or now.duration or 0)
             except Exception as err:  # the ISRC only improves the match
                 _LOGGER.debug("No ISRC for %s: %s", now.title, err)
+        self.hass.async_create_background_task(self._load_analysis(now), f"{DOMAIN} sections")
         bpm, source = await self._lookup.lookup(now.artist, now.title, now.isrc)
         if now is not self.now:
             return
@@ -352,6 +387,80 @@ class BeatEngine:
         _LOGGER.info("Tempo for %s - %s: %s (%s)", now.artist, now.title, bpm, source)
         self._save()
         self._notify()
+
+    # ---- track analysis: sections ---------------------------------------------------------
+    async def _load_analysis(self, now: NowPlaying) -> None:
+        """Sections of the playing track: from a local file's profile, else Music Assistant's
+        waveform - which only exists once MA has analysed the track, so it is asked again a few times."""
+        prof = await self.hass.async_add_executor_job(self.library.find, now.artist, now.title)
+        for wait in (0, 15, 45, 90):
+            if prof or now is not self.now:
+                break
+            await asyncio.sleep(wait)
+            if now is not self.now:
+                return
+            m = now.mapping or {}
+            if m.get("item_id"):
+                try:
+                    wave = await self._ma("audio_analysis/wave_form", item_id=m["item_id"],
+                                          provider_instance_id_or_domain=m.get("provider_instance") or m.get("provider_domain"))
+                except Exception as err:
+                    _LOGGER.debug("No waveform for %s: %s", now.title, err)
+                    wave = None
+                if wave and now.duration:
+                    prof = ma_profile(wave, now.duration)
+        if now is not self.now:
+            return
+        if not prof:
+            self.analysis = {"id": now.key, "source": None, "duration": now.duration, "sections": [], "peaks": [], "timeline": []}
+        else:
+            found = await self.hass.async_add_executor_job(find_sections, prof)
+            duration = prof.get("duration") or now.duration or len(prof["rms"]) * prof["frame"]
+            self.analysis = {"id": now.key, "source": prof.get("source"), "duration": duration,
+                             "timeline": timeline(prof), **found}
+            _LOGGER.info("Sections of %s - %s (%s): %s", now.artist, now.title, prof.get("source"),
+                         ", ".join(f"{s['type']} {s['start']:.0f}s" for s in found["sections"]))
+        self._notify()
+
+    @property
+    def position(self) -> float | None:
+        return asyncio.get_running_loop().time() - self._track_t0 if self.playing else None
+
+    def _section(self) -> tuple[dict | None, bool]:
+        """The section playing now, and whether a peak is."""
+        t, a = self.position, self.analysis
+        if t is None or not a or not a.get("sections"):
+            return None, False
+        peak = any(p0 <= t < p1 for p0, p1 in a.get("peaks") or [])
+        return section_at(a["sections"], t), peak
+
+    async def analyse_folder(self, folder: str | None = None, full: bool = False) -> None:
+        """Make profiles of every new or changed audio file under the folder (one at a time)."""
+        folder = folder or self.music_folder
+        if not folder or self.scan["running"]:
+            return
+        if full:
+            await self.hass.async_add_executor_job(lambda: self.library.index.clear())
+        files = await self.hass.async_add_executor_job(self.library.todo, folder)
+        self.scan = {"running": True, "done": 0, "total": len(files), "current": None, "errors": 0, "folder": folder}
+        self._notify()
+        try:
+            for i, path in enumerate(files):
+                self.scan["current"] = os.path.basename(path)
+                try:
+                    await self.hass.async_add_executor_job(self.library.analyse, path)
+                except Exception as err:
+                    self.scan["errors"] += 1
+                    _LOGGER.warning("Could not analyse %s: %s", path, err)
+                self.scan["done"] = i + 1
+                if i % 10 == 9:
+                    await self.hass.async_add_executor_job(self.library.save_index)
+                    self._notify()
+        finally:
+            await self.hass.async_add_executor_job(self.library.save_index)
+            self.scan.update(running=False, current=None)
+            _LOGGER.info("Analysed %d of %d files in %s (%d errors)", self.scan["done"], len(files), folder, self.scan["errors"])
+            self._notify()
 
     # ---- DMX output ------------------------------------------------------------------------
     def _bind_fixtures(self) -> bool:
@@ -419,7 +528,7 @@ class BeatEngine:
                     elif self.manual and fx.manual:
                         frame = fx.manual
                     elif self.enabled and (self.playing or self.blackout_on_silence):
-                        frame = self._frame(beats, fx)
+                        frame = self._show_frame(beats, fx)
                     else:  # (only the strobe is on: it strobes wherever the light entities have the head)
                         frame = self._entity_frame(fx)
                     if self.strobe and not dark:
@@ -449,6 +558,29 @@ class BeatEngine:
         self._mix_until = now + random.uniform(*MIX_SECONDS)
         _LOGGER.debug("Random mix: %s for %.0f s", self.coord_now, self._mix_until - now)
         self._notify()
+
+    def _show_frame(self, beats: float, fx: Fixture) -> list[int]:
+        """The beat show, as the section playing now wants it (Section show), or the main program."""
+        if not (self.section_show and self.manual is False and self.playing):
+            return self._frame(beats, fx)
+        sec, peak = self._section()
+        kind = sec["type"] if sec else None
+        if kind != self.section_now and fx.index == 0:
+            self.section_now = kind
+            self.hass.bus.async_fire(f"{DOMAIN}_section", {"section": kind, "track": f"{self.now.artist} - {self.now.title}"})
+            self._notify()
+        action = self.section_actions.get(kind, "No change") if kind else "No change"
+        if peak and self.peak_action == "Dark" or action == "Dark":
+            return [0] * CHANNEL_COUNT
+        program = action if action in PROGRAMS else None
+        ramp = 1.0
+        if kind == "Build-up" and sec["end"] > sec["start"]:  # steps get faster towards the drop: x1 -> x2
+            ramp = 1 + min(max((self.position - sec["start"]) / (sec["end"] - sec["start"]), 0), 1)
+        frame = self._frame(beats, fx, program, ramp)
+        burst = kind == "Drop" and self.position - sec["start"] < self.drop_burst_beats * 60 / self.bpm
+        if action == "Strobe" or burst or (peak and self.peak_action == "Strobe"):
+            frame = self._strobe(frame)
+        return frame
 
     def _entity_frame(self, fx: Fixture) -> list[int]:
         values = []
@@ -485,10 +617,10 @@ class BeatEngine:
         self._colour_until = now + random.uniform(*MIX_SECONDS)
         self._notify()
 
-    def _frame(self, beats: float, fx: Fixture) -> list[int]:
-        steps = max(beats, 0) * SPEEDS.get(self.speed, 1.0)
+    def _frame(self, beats: float, fx: Fixture, program: str | None = None, ramp: float = 1.0) -> list[int]:
+        steps = max(beats, 0) * SPEEDS.get(self.speed, 1.0) * ramp
         step, frac = int(steps), steps % 1
-        program = self.program
+        program = program or self.program
         moving = program in ("Full show", "Movement")
         chasing = program in ("Full show", "Colour & gobo", "Pulse", "Strobe", "Fast strobe")
 
@@ -555,10 +687,22 @@ class BeatEngine:
                 "colour_mode": self.colour_mode, "colour_now": self.colour_now,
                 "blackout": self.blackout, "blackout_on_silence": self.blackout_on_silence, "dark": self.dark,
                 "strobe": self.strobe, "strobe_colour": self.strobe_colour,
+                "section_show": self.section_show, "section": self._section_live(),
                 "zone": {"width": self.zone_width, "low": self.zone_low, "high": self.zone_high},
                 "colours": [{"name": n, "hex": h} for n, h in COLOUR_WHEEL],
                 "player": self.now.player or None, "artist": self.now.artist or None, "title": self.now.title or None,
                 "fixtures": fixtures}
+
+    def _section_live(self) -> dict | None:
+        a = self.analysis
+        if not a:
+            return None
+        t = self.position
+        sec, peak = self._section()
+        nxt = next((s for s in a["sections"] if t is not None and s["start"] > t), None)
+        return {"id": a["id"], "source": a["source"], "t": round(t, 2) if t is not None else None,
+                "type": sec["type"] if sec else None, "peak": peak,
+                "next": nxt["type"] if nxt else None, "next_in": round(nxt["start"] - t, 1) if nxt else None}
 
     @property
     def status(self) -> dict:
