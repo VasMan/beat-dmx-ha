@@ -13,6 +13,7 @@ PROGRAMS = ["Full show", "Movement", "Colour & gobo", "Pulse", "Strobe", "Fast s
 COLOUR_MODES = ["Same", "Different"]
 COLOUR_MIX = "Random mix"
 COLOUR_OFFSET = 4  # "Different": the second head is this many slots on round the wheel
+STROBE_PROGRAM_COLOUR = "Program colour"  # Strobe colour: keep whatever colour the program shows
 SILENCE_SECONDS = 3  # Blackout on silence: how long nothing plays before the heads go dark (not between tracks)
 SPEEDS = {"Half": 0.5, "Normal": 1.0, "Double": 2.0}
 

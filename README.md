@@ -68,6 +68,8 @@ Then Settings → Devices & services → Add integration → **Beat DMX**, and e
 | Program (select) | Full show, Movement, Colour & gobo, Pulse, Strobe, Fast strobe |
 | Step speed (select) | Half, Normal, Double |
 | Manual DMX (switch) | hold values set by hand (testing, calibrating) |
+| Strobe (switch) | fastest strobe on top of whatever runs: the heads keep moving with the program |
+| Strobe colour (select) | Program colour (unchanged) or one wheel colour while strobing |
 | Blackout (switch) | every DMX channel of every head at 0, over everything else |
 | Blackout on silence (switch) | with beat sync on: dark once nothing has played for 3 s |
 | Colours (select) | second head the Same colour, a Different one, or Random mix (same/different in turn, 20-45 s each) |

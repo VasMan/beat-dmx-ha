@@ -4,7 +4,7 @@
 //          layout: stacked puts the fixtures under each other instead of side by side;
 //          manual_entity: the Manual DMX switch (switch.beat_dmx_manual_dmx by default);
 //          title: the card's heading ("Live DMX" by default);
-//          blackout_entity: the Blackout switch (switch.beat_dmx_blackout by default).
+//          blackout_entity / strobe_entity: the Blackout / Strobe switches (switch.beat_dmx_blackout / _strobe by default).
 // With Manual DMX on, the bars become sliders and the pan/tilt pad can be dragged (beat_dmx/set_channels),
 // and each head can be calibrated from where it points (beat_dmx.calibrate).
 
@@ -208,6 +208,7 @@ class BeatDmxCard extends HTMLElement {
         button:hover { border-color: var(--bd-accent); }
         button.active { background: var(--bd-warn); border-color: var(--bd-warn); color: #000; }
         button#blackout.active { background: #000; border-color: #000; color: #fff; }
+        button#strobe.active { background: #fff; border-color: #fff; color: #000; box-shadow: 0 0 10px #fff; }
         .chip.dark { background: #000; color: #fff; }
         .tempo { display: flex; align-items: baseline; gap: 6px; }
         .bpm { font-size: 28px; font-weight: 600; font-variant-numeric: tabular-nums; }
@@ -261,6 +262,7 @@ class BeatDmxCard extends HTMLElement {
           <div class="title" id="title">Live DMX</div>
           <span class="chip" id="state">…</span>
           <button id="manual" title="Set DMX values by hand, for testing and calibrating">Manual DMX</button>
+          <button id="strobe" title="Strobe on top of the program: the heads keep moving">Strobe</button>
           <button id="blackout" title="Every DMX channel of every head to 0">Blackout</button>
           <div class="beats" id="beats"><i></i><i></i><i></i><i></i></div>
           <div class="tempo"><span class="bpm" id="bpm">–</span><span class="unit">BPM</span></div>
@@ -276,6 +278,10 @@ class BeatDmxCard extends HTMLElement {
           <a href="https://getsongbpm.com" target="_blank" rel="noopener">GetSongBPM.com</a></div>
       </ha-card>`;
     const $ = (id) => root.getElementById(id);
+    $("strobe").addEventListener("click", () => this._safe(() => {
+      const entity_id = this._config.strobe_entity || "switch.beat_dmx_strobe";
+      this._hass.callService("switch", this._d && this._d.strobe ? "turn_off" : "turn_on", { entity_id }).catch((e) => this._toast(e));
+    }));
     $("blackout").addEventListener("click", () => this._safe(() => {
       const entity_id = this._config.blackout_entity || "switch.beat_dmx_blackout";
       this._hass.callService("switch", this._d && this._d.blackout ? "turn_off" : "turn_on", { entity_id }).catch((e) => this._toast(e));
@@ -303,6 +309,7 @@ class BeatDmxCard extends HTMLElement {
     e.state.textContent = d.blackout ? "Blackout" : d.dark ? "Dark – no music" : d.manual ? "Manual DMX" : d.active ? "Driving" : d.enabled ? "Waiting for music" : "Beat sync off";
     e.state.className = `chip ${d.dark ? "dark" : d.manual ? "manual" : d.active ? "on" : ""}`;
     this.shadowRoot.getElementById("blackout").classList.toggle("active", !!d.blackout);
+    this.shadowRoot.getElementById("strobe").classList.toggle("active", !!d.strobe);
     e.bpm.textContent = d.bpm?.toFixed(1) ?? "–";
     // the beat comes about 5x a second; in between the card counts on from it
     this._beat0 = d.beat;
@@ -320,6 +327,7 @@ class BeatDmxCard extends HTMLElement {
     const now = (setting, playing) => (setting === "Random mix" && playing ? `Random mix → ${playing}` : setting);
     e.show.textContent = `${d.program} · ${d.shape} · ${now(d.coordination, d.coordination_now)}` +
       (d.colour_mode ? ` · colours ${now(d.colour_mode, d.colour_now)}` : "") +
+      (d.strobe ? ` · STROBE (${d.strobe_colour === "Program colour" ? "program colour" : d.strobe_colour})` : "") +
       (d.zone ? ` · zone ±${Math.round(d.zone.width)}°, ${Math.round(d.zone.low)}–${Math.round(d.zone.high)}° up` : "");
     e.credit.hidden = !String(d.source || "").startsWith("getsongbpm");
 

@@ -17,7 +17,7 @@ from homeassistant.helpers.storage import Store
 from .bpm import BpmLookup, track_key
 from .const import (CH_COLOUR, CH_DIM_MODE, CH_DIMMER, CH_FUNCTION, CH_GOBO, CH_PAN, CH_PAN_FINE,
                     CH_PT_SPEED, CH_SHUTTER, CH_TILT, CH_TILT_FINE, CHANNEL_COUNT, COLOUR_MIX, COLOUR_MODES,
-                    COLOUR_OFFSET, COLOUR_WHEEL, COLOURS, SILENCE_SECONDS,
+                    COLOUR_OFFSET, COLOUR_WHEEL, COLOURS, SILENCE_SECONDS, STROBE_PROGRAM_COLOUR,
                     DIM_MODE_STANDARD, DOMAIN, FUNCTION_NONE, GOBOS, PROGRAMS, PT_SPEED_FAST, SHUTTER_OPEN,
                     SPEEDS, STROBE_FAST, STROBE_SLOW)
 from .motion import COORDINATION, DEFAULT_CAL, MIX, MIX_SECONDS, SHAPES, aim_to_dmx, zone_point, zone_to_angles
@@ -28,7 +28,7 @@ POLL_SECONDS = 2
 FPS = 25
 TAP_RESET_SECONDS = 2.0
 SETTINGS = ("enabled", "program", "speed", "intensity", "bpm_override", "shape", "coordination", "colour_mode",
-            "blackout", "blackout_on_silence",
+            "blackout", "blackout_on_silence", "strobe", "strobe_colour",
             "zone_width", "zone_low", "zone_high", "calibration")
 
 
@@ -87,6 +87,8 @@ class BeatEngine:
         self.colour_mode = COLOUR_MODES[0]
         self.blackout = False  # every channel of every head at 0, whatever else is going on
         self.blackout_on_silence = False  # with beat sync on: dark while nothing plays
+        self.strobe = False  # strobe on top of whatever runs: the heads keep moving, only the shutter (and colour) change
+        self.strobe_colour = STROBE_PROGRAM_COLOUR  # or a wheel colour name
 
         # live state
         self.now = NowPlaying()
@@ -120,6 +122,8 @@ class BeatEngine:
             self.coordination = COORDINATION[0]
         if self.colour_mode not in (*COLOUR_MODES, COLOUR_MIX):
             self.colour_mode = COLOUR_MODES[0]
+        if self.strobe_colour not in (STROBE_PROGRAM_COLOUR, *(n for n, _ in COLOUR_WHEEL)):
+            self.strobe_colour = STROBE_PROGRAM_COLOUR
         self._silent_since = self.hass.loop.time()
         self._lookup.cache.update(saved.get("bpm_cache") or {})
         self._tasks.append(self.hass.async_create_background_task(self._poll_loop(), f"{DOMAIN} poll"))
@@ -176,7 +180,7 @@ class BeatEngine:
     def active(self) -> bool:
         """Beat DMX owns the channels (otherwise the Art-Net light entities do)."""
         silence = self.enabled and self.blackout_on_silence
-        return self.blackout or self.manual or (self.enabled and self.playing) or silence
+        return self.blackout or self.manual or self.strobe or (self.enabled and self.playing) or silence
 
     @property
     def dark(self) -> bool:
@@ -414,8 +418,12 @@ class BeatEngine:
                         frame = [0] * CHANNEL_COUNT
                     elif self.manual and fx.manual:
                         frame = fx.manual
-                    else:
+                    elif self.enabled and (self.playing or self.blackout_on_silence):
                         frame = self._frame(beats, fx)
+                    else:  # (only the strobe is on: it strobes wherever the light entities have the head)
+                        frame = self._entity_frame(fx)
+                    if self.strobe and not dark:
+                        frame = self._strobe(frame)
                     for i, value in enumerate(frame):
                         if value != fx.sent[i]:
                             fx.channels[i].set_values([value])
@@ -441,6 +449,27 @@ class BeatEngine:
         self._mix_until = now + random.uniform(*MIX_SECONDS)
         _LOGGER.debug("Random mix: %s for %.0f s", self.coord_now, self._mix_until - now)
         self._notify()
+
+    def _entity_frame(self, fx: Fixture) -> list[int]:
+        values = []
+        for entity in fx.entities:
+            try:
+                values.append(int(entity.get_target_values()[0]))
+            except Exception:
+                values.append(0)
+        return values
+
+    def _strobe(self, frame: list[int]) -> list[int]:
+        """Strobe over a frame: fastest strobe, the beam lit, and the strobe colour if one is chosen."""
+        frame = list(frame)
+        frame[CH_SHUTTER] = STROBE_FAST
+        frame[CH_FUNCTION] = FUNCTION_NONE
+        if frame[CH_DIMMER] < 64:  # (Pulse dips the dimmer; a strobe should be seen)
+            frame[CH_DIMMER] = _byte(255 * max(self.intensity, 25) / 100)
+        names = [n for n, _ in COLOUR_WHEEL]
+        if self.strobe_colour in names:
+            frame[CH_COLOUR] = COLOURS[names.index(self.strobe_colour)]
+        return frame
 
     def _colour_tick(self, now: float, beats: float) -> None:
         """Colours on Random mix: same or different in turn, each for 20-45 s, changing on a bar line."""
@@ -525,6 +554,7 @@ class BeatEngine:
                 "coordination_now": self.coord_now,
                 "colour_mode": self.colour_mode, "colour_now": self.colour_now,
                 "blackout": self.blackout, "blackout_on_silence": self.blackout_on_silence, "dark": self.dark,
+                "strobe": self.strobe, "strobe_colour": self.strobe_colour,
                 "zone": {"width": self.zone_width, "low": self.zone_low, "high": self.zone_high},
                 "colours": [{"name": n, "hex": h} for n, h in COLOUR_WHEEL],
                 "player": self.now.player or None, "artist": self.now.artist or None, "title": self.now.title or None,

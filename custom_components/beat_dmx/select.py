@@ -6,7 +6,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import BeatConfigEntry
-from .const import COLOUR_MIX, COLOUR_MODES, PROGRAMS, SPEEDS
+from .const import COLOUR_MIX, COLOUR_MODES, COLOUR_WHEEL, PROGRAMS, SPEEDS, STROBE_PROGRAM_COLOUR
 from .entity import BeatEntity
 from .motion import COORDINATION, MIX, SHAPES
 
@@ -17,7 +17,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: BeatConfigEntry, add: Ad
          BeatSelect(engine, "speed", "Step speed", list(SPEEDS), "mdi:speedometer"),
          BeatSelect(engine, "shape", "Movement shape", SHAPES, "mdi:vector-curve"),
          BeatSelect(engine, "coordination", "Coordination", [*COORDINATION, MIX], "mdi:account-multiple"),
-         BeatSelect(engine, "colour_mode", "Colours", [*COLOUR_MODES, COLOUR_MIX], "mdi:palette")])
+         BeatSelect(engine, "colour_mode", "Colours", [*COLOUR_MODES, COLOUR_MIX], "mdi:palette"),
+         BeatSelect(engine, "strobe_colour", "Strobe colour", [STROBE_PROGRAM_COLOUR, *(n for n, _ in COLOUR_WHEEL)],
+                    "mdi:flash-outline")])
 
 
 class BeatSelect(BeatEntity, SelectEntity):

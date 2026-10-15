@@ -14,7 +14,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: BeatConfigEntry, add: Ad
     add([BeatSyncSwitch(engine, "enabled", "Beat sync"),
          ManualSwitch(engine, "manual", "Manual DMX"),
          SettingSwitch(engine, "blackout", "Blackout", "mdi:lightbulb-off"),
-         SettingSwitch(engine, "blackout_on_silence", "Blackout on silence", "mdi:volume-off")])
+         SettingSwitch(engine, "blackout_on_silence", "Blackout on silence", "mdi:volume-off"),
+         SettingSwitch(engine, "strobe", "Strobe", "mdi:flash")])
 
 
 class BeatSyncSwitch(BeatEntity, SwitchEntity):
