@@ -15,7 +15,7 @@ SET_CHANNEL = vol.Schema({
 })
 CALIBRATE = vol.Schema({
     vol.Required("fixture"): cv.string,
-    vol.Required("point"): vol.In(["up", "level", "reverse_pan", "reset"]),
+    vol.Required("point"): vol.In(["up", "level", "reverse_pan", "reset", "go_up", "go_level", "go_left"]),
 })
 
 
@@ -29,6 +29,7 @@ def _engine(hass: HomeAssistant):
 @callback
 def async_register(hass: HomeAssistant) -> None:
     def _call(fn):
+        @callback  # (a plain function would be run in a worker thread; the engine lives in the event loop)
         def handler(call: ServiceCall) -> None:
             try:
                 fn(_engine(hass), call.data)

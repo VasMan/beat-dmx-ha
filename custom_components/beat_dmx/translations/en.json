@@ -49,7 +49,7 @@
     },
     "calibrate": {
       "name": "Calibrate head",
-      "description": "Uses the head's current pan/tilt: up = pointing straight up, level = level and facing into the room. reverse_pan flips which way pan turns; reset forgets the calibration.",
+      "description": "Calibrate a head (Manual DMX). up / level: the head points straight up / level into the room now. reverse_pan: flip which way pan turns. reset: forget. go_up / go_level / go_left: aim it at straight up / level forward / 45° left as currently calibrated, to adjust or check.",
       "fields": {
         "fixture": {
           "name": "Fixture",
@@ -57,7 +57,7 @@
         },
         "point": {
           "name": "Point",
-          "description": "up, level, reverse_pan or reset"
+          "description": "up, level, reverse_pan, reset, go_up, go_level or go_left"
         }
       }
     }

@@ -90,7 +90,7 @@ and with Manual DMX on its bars become sliders, the pan/tilt pad can be dragged 
 ## Services
 
 - `beat_dmx.set_channel` (fixture, channel 1-11, value 0-255): manual DMX (turns Manual DMX on)
-- `beat_dmx.calibrate` (fixture, point: `up`, `level`, `reverse_pan`, `reset`)
+- `beat_dmx.calibrate` (fixture, point: `up`, `level`, `reverse_pan`, `reset`; `go_up`, `go_level`, `go_left` aim the head for the calibration steps)
 
 ## Notes
 

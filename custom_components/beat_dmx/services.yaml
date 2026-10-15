@@ -33,3 +33,6 @@ calibrate:
             - level
             - reverse_pan
             - reset
+            - go_up
+            - go_level
+            - go_left

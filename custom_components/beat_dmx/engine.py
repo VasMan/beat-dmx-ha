@@ -182,10 +182,35 @@ class BeatEngine:
         self._notify()
 
     def calibrate(self, ref: str, point: str) -> None:
-        """Take the head's current manual pan/tilt as 'up' (straight up) or 'level' (level, facing
-        into the room), or flip which way pan turns."""
+        """Calibrate a head from where it points now (Manual DMX), or move it for a calibration step.
+
+        up / level: take the current pan/tilt as straight up / level and facing into the room
+        reverse_pan: flip which way pan turns; reset: forget the calibration
+        go_up / go_level / go_left: aim the head (Manual DMX) at straight up / level forward /
+        45 degrees to the left and 20 up, as the calibration has it now - to adjust or check it
+        """
         fx = self._fixture(ref)
         cal = {**DEFAULT_CAL, **self.calibration.get(fx.prefix, {})}
+        if point.startswith("go_"):
+            if not self.manual:
+                self.set_manual(True)
+            if not fx.manual:
+                raise ValueError(f"{fx.prefix} has no Art-Net channels yet")
+            if point == "go_up":
+                tilt = round(cal["tilt_up"] * 257)
+                fx.manual[CH_TILT], fx.manual[CH_TILT_FINE] = tilt >> 8, tilt & 0xFF
+            else:
+                pan, tilt = aim_to_dmx(cal, *((0, 0) if point == "go_level" else (45, 20)))
+                fx.manual[CH_PAN], fx.manual[CH_PAN_FINE] = pan >> 8, pan & 0xFF
+                fx.manual[CH_TILT], fx.manual[CH_TILT_FINE] = tilt >> 8, tilt & 0xFF
+            # make sure there is a beam to look at
+            if fx.manual[CH_SHUTTER] <= 7:
+                fx.manual[CH_SHUTTER] = SHUTTER_OPEN
+            if fx.manual[CH_DIMMER] < 64:
+                fx.manual[CH_DIMMER] = 255
+            fx.manual[CH_FUNCTION] = FUNCTION_NONE
+            self._notify()
+            return
         values = fx.manual if self.manual and fx.manual else self._read(fx)
         pan = (values[CH_PAN] or 0) + (values[CH_PAN_FINE] or 0) / 256
         tilt = (values[CH_TILT] or 0) + (values[CH_TILT_FINE] or 0) / 256
@@ -202,19 +227,6 @@ class BeatEngine:
         self.calibration = {**self.calibration, fx.prefix: cal}
         _LOGGER.info("Calibration of %s: %s", fx.prefix, cal)
         self._save()
-        self._notify()
-
-    def tap(self) -> None:
-        t = asyncio.get_running_loop().time()
-        if self._taps and t - self._taps[-1] > TAP_RESET_SECONDS:
-            self._taps.clear()
-        self._taps.append(t)
-        self._anchor = t  # a tap always lands on a beat
-        if len(self._taps) >= 4:
-            self.tap_bpm = round(60 * (len(self._taps) - 1) / (self._taps[-1] - self._taps[0]), 1)
-            if self.now.key:
-                self._lookup.cache[self.now.key] = {"bpm": self.tap_bpm, "source": "tap"}
-                self._save()
         self._notify()
 
     # ---- Music Assistant -------------------------------------------------------------------

@@ -75,12 +75,28 @@ class BeatDmxCard extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
-    if (!this._unsub && !this._subscribing && this.isConnected) this._subscribe();
+    this._safe(() => { if (!this._unsub && !this._subscribing && this.isConnected) this._subscribe(); });
   }
 
   connectedCallback() {
-    if (!this.shadowRoot) this._build();
-    if (this._hass && !this._unsub && !this._subscribing) this._subscribe();
+    this._safe(() => {
+      if (!this.shadowRoot) this._build();
+      if (this._hass && !this._unsub && !this._subscribing) this._subscribe();
+    });
+  }
+
+  // runs fn; an error is shown in the card (and the console) instead of breaking the card
+  _safe(fn) {
+    try {
+      return fn();
+    } catch (err) {
+      console.error("beat-dmx-card", err);
+      if (this._els && this._els.err) {
+        this._els.err.hidden = false;
+        this._els.err.textContent = `Card error: ${err.message || err}`;
+      }
+      return undefined;
+    }
   }
 
   disconnectedCallback() {
@@ -99,10 +115,10 @@ class BeatDmxCard extends HTMLElement {
   _subscribe() {
     this._subscribing = true;
     this._unsub = this._hass.connection
-      .subscribeMessage((data) => this._render(data), { type: "beat_dmx/subscribe" })
+      .subscribeMessage((data) => this._safe(() => this._render(data)), { type: "beat_dmx/subscribe" })
       .catch((err) => {
         this._unsub = null;
-        this._render({ error: err.message || "Beat DMX is not available" });
+        this._safe(() => this._render({ error: err.message || "Beat DMX is not available" }));
         return () => {};
       })
       .finally(() => (this._subscribing = false));
@@ -118,6 +134,7 @@ class BeatDmxCard extends HTMLElement {
 
   _flush() {
     this._timer = null;
+    if (!this._hass) return;
     const calls = [...this._pending.values()];
     this._pending.clear();
     calls.forEach((data) => this._hass.callService("beat_dmx", "set_channel", data).catch((e) => this._toast(e)));
@@ -128,6 +145,12 @@ class BeatDmxCard extends HTMLElement {
   }
 
   _toast(err) {
+    if (this._els && this._els.err) {
+      this._els.err.hidden = false;
+      this._els.err.textContent = `Beat DMX: ${err.message || err}`;
+      clearTimeout(this._errTimer);
+      this._errTimer = setTimeout(() => (this._els.err.hidden = true), 8000);
+    }
     this.dispatchEvent(new CustomEvent("hass-notification", { detail: { message: `Beat DMX: ${err.message || err}` }, bubbles: true, composed: true }));
   }
 
@@ -191,6 +214,9 @@ class BeatDmxCard extends HTMLElement {
         .cal { display: none; margin: -2px 0 10px; font-size: 12px; color: var(--bd-muted); }
         .manual .cal { display: block; }
         .cal .btns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+        .cal ol { margin: 6px 0; padding-left: 20px; } .cal li { margin: 4px 0; line-height: 1.9; }
+        .cal button.set { border-color: var(--bd-warn); }
+        .cal b { color: var(--primary-text-color); font-weight: 500; }
         .row { display: grid; grid-template-columns: 74px 30px 1fr 30px minmax(0, 104px); gap: 8px; align-items: center;
                font-size: 12px; height: 24px; }
         .row .addr, .row .val { color: var(--bd-muted); font-variant-numeric: tabular-nums; text-align: right; }
@@ -202,7 +228,7 @@ class BeatDmxCard extends HTMLElement {
         .row .txt { color: var(--bd-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .credit { margin-top: 10px; font-size: 11px; color: var(--bd-muted); text-align: right; }
         .credit a { color: inherit; }
-        .err { color: var(--error-color, #f44336); }
+        .err { color: var(--error-color, #f44336); font-size: 13px; margin: 0 0 10px; }
         @media (max-width: 420px) { .row { grid-template-columns: 62px 26px 1fr 28px; } .row .txt { display: none; } }
       </style>
       <ha-card>
@@ -218,6 +244,7 @@ class BeatDmxCard extends HTMLElement {
           <dt>Playing</dt><dd id="track"></dd>
           <dt>Show</dt><dd id="show"></dd>
         </dl>
+        <div class="err" id="err" hidden></div>
         <div class="fixtures" id="fixtures"></div>
         <div class="credit" id="credit" hidden>Tempo data provided by
           <a href="https://getsongbpm.com" target="_blank" rel="noopener">GetSongBPM.com</a></div>
@@ -225,8 +252,8 @@ class BeatDmxCard extends HTMLElement {
     const $ = (id) => root.getElementById(id);
     this._els = { card: root.querySelector("ha-card"), state: $("state"), manual: $("manual"), bpm: $("bpm"),
       found: $("found"), track: $("track"), show: $("show"), beats: [...$("beats").children],
-      fixtures: $("fixtures"), credit: $("credit") };
-    this._els.manual.addEventListener("click", () => this._toggleManual());
+      fixtures: $("fixtures"), credit: $("credit"), err: $("err") };
+    this._els.manual.addEventListener("click", () => this._safe(() => this._toggleManual()));
     this._fx = [];
   }
 
@@ -284,15 +311,20 @@ class BeatDmxCard extends HTMLElement {
       el.className = "fx";
       el.innerHTML = `
         <h3>${esc(f.name)} <span>DMX ${f.start ?? "?"}–${f.start != null ? f.start + 10 : "?"}</span></h3>
-        <div class="pad"><div class="dot"></div><div class="padhint">drag to aim (pan ↔, tilt ↕)</div><div class="padlabel"></div></div>
+        <div class="pad"><div class="dot"></div><div class="padhint">drag to aim: pan ↔ (0–255), tilt ↕ (0–255)</div><div class="padlabel"></div></div>
         <div class="cal">
+          <b>Calibrate this head</b> (so the zone and the 3D view know its front)
+          <ol>
+            <li><button data-point="go_up">Go</button> Adjust <i>Tilt</i> until the beam points <b>straight up</b>, then
+              <button data-point="up" class="set">It points straight up</button></li>
+            <li><button data-point="go_level">Go</button> Turn <i>Pan</i> until the beam points <b>into the middle of the room</b>
+              (away from the wall behind the head) and adjust <i>Tilt</i> until it is <b>level</b>, then
+              <button data-point="level" class="set">It points level, into the room</button></li>
+            <li><button data-point="go_left">Check</button> The beam should now point <b>45° to the left</b> (as seen from behind the head) and a bit up.
+              If it went right: <button data-point="reverse_pan" class="set">Flip pan direction</button></li>
+          </ol>
           <div class="caltext"></div>
-          <div class="btns">
-            <button data-point="up" title="Aim the head straight up with pan/tilt, then press">It points straight up</button>
-            <button data-point="level" title="Aim the head level, into the middle of the room, then press">It points level, into the room</button>
-            <button data-point="reverse_pan" title="Press if the head turns the wrong way in the 3D view">Flip pan direction</button>
-            <button data-point="reset">Reset</button>
-          </div>
+          <div class="btns"><button data-point="reset">Reset calibration</button></div>
         </div>
         ${CHANNELS.map((c, i) => `
           <div class="row"><span>${c.label}</span><span class="addr">${f.start != null ? f.start + i : ""}</span>
@@ -300,9 +332,9 @@ class BeatDmxCard extends HTMLElement {
             <span class="val">–</span><span class="txt"></span></div>`).join("")}`;
       this._els.fixtures.appendChild(el);
 
-      el.querySelectorAll(".cal button").forEach((b) => b.addEventListener("click", () => this._calibrate(f.prefix, b.dataset.point)));
+      el.querySelectorAll(".cal button").forEach((b) => b.addEventListener("click", () => this._safe(() => this._calibrate(f.prefix, b.dataset.point))));
       el.querySelectorAll(".row input").forEach((inp) =>
-        inp.addEventListener("input", () => this._send(f.prefix, Number(inp.dataset.ch), Number(inp.value))));
+        inp.addEventListener("input", () => this._safe(() => this._send(f.prefix, Number(inp.dataset.ch), Number(inp.value)))));
       const pad = el.querySelector(".pad");
       const aim = (ev) => {
         if (!this._d || !this._d.manual) return;
@@ -311,8 +343,17 @@ class BeatDmxCard extends HTMLElement {
         this._send(f.prefix, 1, x * 255);
         this._send(f.prefix, 3, y * 255);
       };
-      pad.addEventListener("pointerdown", (ev) => { if (this._d && this._d.manual) { pad.setPointerCapture(ev.pointerId); aim(ev); } });
-      pad.addEventListener("pointermove", (ev) => { if (pad.hasPointerCapture(ev.pointerId)) aim(ev); });
+      // (the pad keeps the pointer while dragging; touch scrolling is off on it)
+      let dragging = false;
+      pad.addEventListener("pointerdown", (ev) => this._safe(() => {
+        if (!this._d || !this._d.manual) return;
+        dragging = true;
+        ev.preventDefault();
+        try { pad.setPointerCapture(ev.pointerId); } catch (e) { /* not supported: moves still arrive while over the pad */ }
+        aim(ev);
+      }));
+      pad.addEventListener("pointermove", (ev) => this._safe(() => { if (dragging) aim(ev); }));
+      ["pointerup", "pointercancel", "lostpointercapture"].forEach((t) => pad.addEventListener(t, () => (dragging = false)));
 
       return {
         prefix: f.prefix, dot: el.querySelector(".dot"), padlabel: el.querySelector(".padlabel"), caltext: el.querySelector(".caltext"),
