@@ -446,7 +446,8 @@ class BeatEngine:
         self._notify()
         try:
             for i, path in enumerate(files):
-                self.scan["current"] = os.path.basename(path)
+                self.scan["current"] = os.path.relpath(path, folder)
+                self._notify()  # (the Analysed tracks sensor shows which file and how far)
                 try:
                     await self.hass.async_add_executor_job(self.library.analyse, path)
                 except Exception as err:
@@ -455,7 +456,6 @@ class BeatEngine:
                 self.scan["done"] = i + 1
                 if i % 10 == 9:
                     await self.hass.async_add_executor_job(self.library.save_index)
-                    self._notify()
         finally:
             await self.hass.async_add_executor_job(self.library.save_index)
             self.scan.update(running=False, current=None)

@@ -48,15 +48,24 @@ def profile_file(path: str) -> dict:
                           capture_output=True, timeout=600, check=False)
     if proc.returncode or not proc.stdout:
         raise RuntimeError((proc.stderr or b"ffmpeg failed").decode(errors="ignore").strip()[-300:])
-    pcm = array.array("h")
-    pcm.frombytes(proc.stdout[: len(proc.stdout) // 4 * 4])
-    step = int(RATE * FRAME) * 2  # interleaved: full, bass
-    rms, bass = [], []
-    for i in range(0, len(pcm) - step + 1, step):
-        chunk = pcm[i:i + step]
-        full, low = chunk[0::2], chunk[1::2]
-        rms.append(math.sqrt(sum(x * x for x in full) / len(full)))
-        bass.append(math.sqrt(sum(x * x for x in low) / len(low)))
+    raw = proc.stdout[: len(proc.stdout) // 4 * 4]
+    step = int(RATE * FRAME)  # samples per frame (and channel)
+    try:  # numpy when Home Assistant has it: many times faster
+        import numpy as np  # noqa: PLC0415
+
+        pcm = np.frombuffer(raw, dtype="<i2").astype(np.float64).reshape(-1, 2)
+        frames = len(pcm) // step
+        sq = (pcm[: frames * step] ** 2).reshape(frames, step, 2).mean(axis=1)
+        rms, bass = np.sqrt(sq[:, 0]).tolist(), np.sqrt(sq[:, 1]).tolist()
+    except ImportError:
+        pcm = array.array("h")
+        pcm.frombytes(raw)
+        rms, bass = [], []
+        for i in range(0, len(pcm) - 2 * step + 1, 2 * step):  # interleaved: full, bass
+            chunk = pcm[i:i + 2 * step]
+            full, low = chunk[0::2], chunk[1::2]
+            rms.append(math.sqrt(sum(x * x for x in full) / len(full)))
+            bass.append(math.sqrt(sum(x * x for x in low) / len(low)))
     return {**info, "rms": _scale(rms), "bass": _scale(bass), "frame": FRAME, "source": "file"}
 
 

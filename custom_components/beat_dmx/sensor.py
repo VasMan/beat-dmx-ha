@@ -92,4 +92,11 @@ class AnalysedSensor(BeatEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict:
-        return {**self.engine.scan, "music_folder": self.engine.music_folder or None}
+        scan = self.engine.scan
+        total, done = scan.get("total") or 0, scan.get("done") or 0
+        if scan.get("running"):
+            progress = f"{done} / {total} ({round(100 * done / total) if total else 0}%)"
+        else:
+            progress = f"finished: {done} / {total}" + (f", {scan['errors']} failed" if scan.get("errors") else "") if total else "idle"
+        return {"progress": progress, "analysing_now": scan.get("current") or "–", **scan,
+                "music_folder": self.engine.music_folder or None}
