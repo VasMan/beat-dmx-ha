@@ -65,9 +65,13 @@ Then Settings → Devices & services → Add integration → **Beat DMX**, and e
 | Beat sync (switch) | on/off |
 | Tempo (sensor) | current BPM; attribute `source` says where it came from |
 | Now following (sensor) | track and player |
-| Program (select) | Full show, Movement, Colour & gobo, Pulse, Strobe |
+| Program (select) | Full show, Movement, Colour & gobo, Pulse, Strobe, Fast strobe |
 | Step speed (select) | Half, Normal, Double |
 | Manual DMX (switch) | hold values set by hand (testing, calibrating) |
+| Blackout (switch) | every DMX channel of every head at 0, over everything else |
+| Blackout on silence (switch) | with beat sync on: dark once nothing has played for 3 s |
+| Colours (select) | second head the Same colour, a Different one, or Random mix (same/different in turn, 20-45 s each) |
+| Coordination now, Colours now (sensors) | what a Random mix is playing at the moment |
 | Movement shape, Coordination (selects) | how the heads move, and together |
 | Intensity, Tempo override (numbers) | override 0 = automatic |
 | Zone width, Lowest / Highest beam angle (numbers) | the movement zone |

@@ -8,7 +8,12 @@ CONF_DEFAULT_BPM = "default_bpm"
 DEFAULT_FIXTURES = "light.left_beam_ch, light.right_beam_ch"
 DEFAULT_BPM = 120
 
-PROGRAMS = ["Full show", "Movement", "Colour & gobo", "Pulse", "Strobe"]
+PROGRAMS = ["Full show", "Movement", "Colour & gobo", "Pulse", "Strobe", "Fast strobe"]
+# the second head's colour: the same as the first, a different one, or one of the two in turn
+COLOUR_MODES = ["Same", "Different"]
+COLOUR_MIX = "Random mix"
+COLOUR_OFFSET = 4  # "Different": the second head is this many slots on round the wheel
+SILENCE_SECONDS = 3  # Blackout on silence: how long nothing plays before the heads go dark (not between tracks)
 SPEEDS = {"Half": 0.5, "Normal": 1.0, "Double": 2.0}
 
 # BeamZ Panther 40 LED Spot, 11-channel mode (manual page 28); offsets from the fixture's first channel

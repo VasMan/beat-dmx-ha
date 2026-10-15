@@ -1,4 +1,4 @@
-"""Beat sync and manual DMX on/off."""
+"""Beat sync, manual DMX, blackout and blackout on silence."""
 from __future__ import annotations
 
 from homeassistant.components.switch import SwitchEntity
@@ -10,8 +10,11 @@ from .entity import BeatEntity
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: BeatConfigEntry, add: AddEntitiesCallback) -> None:
-    add([BeatSyncSwitch(entry.runtime_data, "enabled", "Beat sync"),
-         ManualSwitch(entry.runtime_data, "manual", "Manual DMX")])
+    engine = entry.runtime_data
+    add([BeatSyncSwitch(engine, "enabled", "Beat sync"),
+         ManualSwitch(engine, "manual", "Manual DMX"),
+         SettingSwitch(engine, "blackout", "Blackout", "mdi:lightbulb-off"),
+         SettingSwitch(engine, "blackout_on_silence", "Blackout on silence", "mdi:volume-off")])
 
 
 class BeatSyncSwitch(BeatEntity, SwitchEntity):
@@ -45,3 +48,22 @@ class ManualSwitch(BeatEntity, SwitchEntity):
 
     async def async_turn_off(self, **kwargs) -> None:
         self.engine.set_manual(False)
+
+
+class SettingSwitch(BeatEntity, SwitchEntity):
+    """An on/off setting of the engine (Blackout: every channel 0; Blackout on silence: dark while nothing plays)."""
+
+    def __init__(self, engine, key: str, name: str, icon: str) -> None:
+        super().__init__(engine, key, name)
+        self._key = key
+        self._attr_icon = icon
+
+    @property
+    def is_on(self) -> bool:
+        return bool(getattr(self.engine, self._key))
+
+    async def async_turn_on(self, **kwargs) -> None:
+        self.engine.set(self._key, True)
+
+    async def async_turn_off(self, **kwargs) -> None:
+        self.engine.set(self._key, False)

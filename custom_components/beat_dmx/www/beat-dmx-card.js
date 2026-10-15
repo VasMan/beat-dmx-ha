@@ -3,7 +3,8 @@
 // Options: fixtures: [prefix, ...] shows those fixtures in that order (others after them);
 //          layout: stacked puts the fixtures under each other instead of side by side;
 //          manual_entity: the Manual DMX switch (switch.beat_dmx_manual_dmx by default);
-//          title: the card's heading ("Live DMX" by default).
+//          title: the card's heading ("Live DMX" by default);
+//          blackout_entity: the Blackout switch (switch.beat_dmx_blackout by default).
 // With Manual DMX on, the bars become sliders and the pan/tilt pad can be dragged (beat_dmx/set_channels),
 // and each head can be calibrated from where it points (beat_dmx.calibrate).
 
@@ -206,6 +207,8 @@ class BeatDmxCard extends HTMLElement {
                  border: 1px solid var(--divider-color, #444); background: transparent; color: var(--primary-text-color); }
         button:hover { border-color: var(--bd-accent); }
         button.active { background: var(--bd-warn); border-color: var(--bd-warn); color: #000; }
+        button#blackout.active { background: #000; border-color: #000; color: #fff; }
+        .chip.dark { background: #000; color: #fff; }
         .tempo { display: flex; align-items: baseline; gap: 6px; }
         .bpm { font-size: 28px; font-weight: 600; font-variant-numeric: tabular-nums; }
         .unit { color: var(--bd-muted); font-size: 12px; }
@@ -258,6 +261,7 @@ class BeatDmxCard extends HTMLElement {
           <div class="title" id="title">Live DMX</div>
           <span class="chip" id="state">…</span>
           <button id="manual" title="Set DMX values by hand, for testing and calibrating">Manual DMX</button>
+          <button id="blackout" title="Every DMX channel of every head to 0">Blackout</button>
           <div class="beats" id="beats"><i></i><i></i><i></i><i></i></div>
           <div class="tempo"><span class="bpm" id="bpm">–</span><span class="unit">BPM</span></div>
         </div>
@@ -272,6 +276,10 @@ class BeatDmxCard extends HTMLElement {
           <a href="https://getsongbpm.com" target="_blank" rel="noopener">GetSongBPM.com</a></div>
       </ha-card>`;
     const $ = (id) => root.getElementById(id);
+    $("blackout").addEventListener("click", () => this._safe(() => {
+      const entity_id = this._config.blackout_entity || "switch.beat_dmx_blackout";
+      this._hass.callService("switch", this._d && this._d.blackout ? "turn_off" : "turn_on", { entity_id }).catch((e) => this._toast(e));
+    }));
     this._els = { card: root.querySelector("ha-card"), state: $("state"), manual: $("manual"), bpm: $("bpm"),
       found: $("found"), track: $("track"), show: $("show"), beats: [...$("beats").children],
       fixtures: $("fixtures"), credit: $("credit"), err: $("err") };
@@ -292,8 +300,9 @@ class BeatDmxCard extends HTMLElement {
     if (Array.isArray(d.colours) && d.colours.length === 8) WHEEL = d.colours;
     e.card.classList.toggle("manual", !!d.manual);
     e.manual.classList.toggle("active", !!d.manual);
-    e.state.textContent = d.manual ? "Manual DMX" : d.active ? "Driving" : d.enabled ? "Waiting for music" : "Beat sync off";
-    e.state.className = `chip ${d.manual ? "manual" : d.active ? "on" : ""}`;
+    e.state.textContent = d.blackout ? "Blackout" : d.dark ? "Dark – no music" : d.manual ? "Manual DMX" : d.active ? "Driving" : d.enabled ? "Waiting for music" : "Beat sync off";
+    e.state.className = `chip ${d.dark ? "dark" : d.manual ? "manual" : d.active ? "on" : ""}`;
+    this.shadowRoot.getElementById("blackout").classList.toggle("active", !!d.blackout);
     e.bpm.textContent = d.bpm?.toFixed(1) ?? "–";
     // the beat comes about 5x a second; in between the card counts on from it
     this._beat0 = d.beat;
@@ -308,8 +317,9 @@ class BeatDmxCard extends HTMLElement {
     e.found.title = `source: ${d.source}`;
     e.track.textContent = d.title ? `${d.artist ? `${d.artist} – ` : ""}${d.title}${d.player ? ` · ${d.player}` : ""}` : "Nothing playing";
     e.track.title = e.track.textContent;
-    const coord = d.coordination === "Random mix" && d.coordination_now ? `Random mix (now ${d.coordination_now})` : d.coordination;
-    e.show.textContent = `${d.program} · ${d.shape} · ${coord}` +
+    const now = (setting, playing) => (setting === "Random mix" && playing ? `Random mix → ${playing}` : setting);
+    e.show.textContent = `${d.program} · ${d.shape} · ${now(d.coordination, d.coordination_now)}` +
+      (d.colour_mode ? ` · colours ${now(d.colour_mode, d.colour_now)}` : "") +
       (d.zone ? ` · zone ±${Math.round(d.zone.width)}°, ${Math.round(d.zone.low)}–${Math.round(d.zone.high)}° up` : "");
     e.credit.hidden = !String(d.source || "").startsWith("getsongbpm");
 

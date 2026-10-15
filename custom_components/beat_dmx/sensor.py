@@ -11,7 +11,9 @@ from .entity import BeatEntity
 
 async def async_setup_entry(hass: HomeAssistant, entry: BeatConfigEntry, add: AddEntitiesCallback) -> None:
     engine = entry.runtime_data
-    add([BpmSensor(engine, "bpm", "Tempo"), TrackSensor(engine, "track", "Now following")])
+    add([BpmSensor(engine, "bpm", "Tempo"), TrackSensor(engine, "track", "Now following"),
+         NowSensor(engine, "coord_now", "Coordination now", "mdi:account-multiple"),
+         NowSensor(engine, "colour_now", "Colours now", "mdi:palette")])
 
 
 class BpmSensor(BeatEntity, SensorEntity):
@@ -42,3 +44,16 @@ class TrackSensor(BeatEntity, SensorEntity):
     @property
     def extra_state_attributes(self) -> dict:
         return {"player": self.engine.now.player or None}
+
+
+class NowSensor(BeatEntity, SensorEntity):
+    """What a Random mix setting is playing right now (or the fixed setting)."""
+
+    def __init__(self, engine, key: str, name: str, icon: str) -> None:
+        super().__init__(engine, key, name)
+        self._key = key
+        self._attr_icon = icon
+
+    @property
+    def native_value(self) -> str:
+        return getattr(self.engine, self._key)

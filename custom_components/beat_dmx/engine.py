@@ -16,7 +16,8 @@ from homeassistant.helpers.storage import Store
 
 from .bpm import BpmLookup, track_key
 from .const import (CH_COLOUR, CH_DIM_MODE, CH_DIMMER, CH_FUNCTION, CH_GOBO, CH_PAN, CH_PAN_FINE,
-                    CH_PT_SPEED, CH_SHUTTER, CH_TILT, CH_TILT_FINE, CHANNEL_COUNT, COLOUR_WHEEL, COLOURS,
+                    CH_PT_SPEED, CH_SHUTTER, CH_TILT, CH_TILT_FINE, CHANNEL_COUNT, COLOUR_MIX, COLOUR_MODES,
+                    COLOUR_OFFSET, COLOUR_WHEEL, COLOURS, SILENCE_SECONDS,
                     DIM_MODE_STANDARD, DOMAIN, FUNCTION_NONE, GOBOS, PROGRAMS, PT_SPEED_FAST, SHUTTER_OPEN,
                     SPEEDS, STROBE_FAST, STROBE_SLOW)
 from .motion import COORDINATION, DEFAULT_CAL, MIX, MIX_SECONDS, SHAPES, aim_to_dmx, zone_point, zone_to_angles
@@ -26,7 +27,8 @@ _LOGGER = logging.getLogger(__name__)
 POLL_SECONDS = 2
 FPS = 25
 TAP_RESET_SECONDS = 2.0
-SETTINGS = ("enabled", "program", "speed", "intensity", "bpm_override", "shape", "coordination",
+SETTINGS = ("enabled", "program", "speed", "intensity", "bpm_override", "shape", "coordination", "colour_mode",
+            "blackout", "blackout_on_silence",
             "zone_width", "zone_low", "zone_high", "calibration")
 
 
@@ -82,6 +84,9 @@ class BeatEngine:
         self.zone_high = 75.0
         self.calibration: dict[str, dict] = {}  # fixture prefix -> DEFAULT_CAL keys
         self.manual = False  # not persisted: manual DMX is for testing
+        self.colour_mode = COLOUR_MODES[0]
+        self.blackout = False  # every channel of every head at 0, whatever else is going on
+        self.blackout_on_silence = False  # with beat sync on: dark while nothing plays
 
         # live state
         self.now = NowPlaying()
@@ -94,6 +99,11 @@ class BeatEngine:
         self._coord_prev: str | None = None
         self._coord_from_beat = 0.0
         self._mix_until: float | None = None
+        # colours: Random mix swaps same/different the same way
+        self.colour_now = COLOUR_MODES[0]
+        self._colour_until: float | None = None
+        self._silent_since = 0.0  # loop time the music stopped
+        self._dark = False  # what the render loop put out last: all zeros or not
         self._lookup_task: asyncio.Task | None = None
 
     # ---- lifecycle -------------------------------------------------------------------------
@@ -108,6 +118,9 @@ class BeatEngine:
             self.shape = SHAPES[0]
         if self.coordination not in (*COORDINATION, MIX):
             self.coordination = COORDINATION[0]
+        if self.colour_mode not in (*COLOUR_MODES, COLOUR_MIX):
+            self.colour_mode = COLOUR_MODES[0]
+        self._silent_since = self.hass.loop.time()
         self._lookup.cache.update(saved.get("bpm_cache") or {})
         self._tasks.append(self.hass.async_create_background_task(self._poll_loop(), f"{DOMAIN} poll"))
 
@@ -161,7 +174,18 @@ class BeatEngine:
 
     @property
     def active(self) -> bool:
-        return self.manual or (self.enabled and self.playing)
+        """Beat DMX owns the channels (otherwise the Art-Net light entities do)."""
+        silence = self.enabled and self.blackout_on_silence
+        return self.blackout or self.manual or (self.enabled and self.playing) or silence
+
+    @property
+    def dark(self) -> bool:
+        """All channels at 0: Blackout, or Blackout on silence once nothing has played for a few seconds."""
+        if self.blackout:
+            return True
+        if self.manual or not (self.enabled and self.blackout_on_silence) or self.playing:
+            return False
+        return asyncio.get_running_loop().time() - self._silent_since >= SILENCE_SECONDS
 
     # ---- manual DMX and calibration ------------------------------------------------------
     def set_manual(self, on: bool) -> None:
@@ -278,6 +302,7 @@ class BeatEngine:
         if player is None:
             if self.playing:
                 self.now = NowPlaying()
+                self._silent_since = asyncio.get_running_loop().time()
                 self._update_render()
                 self._notify()
             return
@@ -377,10 +402,20 @@ class BeatEngine:
             while True:
                 beats = (loop.time() - self._anchor) * self.bpm / 60
                 self._mix_tick(loop.time(), beats)
+                self._colour_tick(loop.time(), beats)
+                dark = self.dark
+                if dark != self._dark:
+                    self._dark = dark
+                    self._notify()
                 for fx in self._fixtures:
                     if not fx.channels:
                         continue
-                    frame = fx.manual if self.manual and fx.manual else self._frame(beats, fx)
+                    if dark:
+                        frame = [0] * CHANNEL_COUNT
+                    elif self.manual and fx.manual:
+                        frame = fx.manual
+                    else:
+                        frame = self._frame(beats, fx)
                     for i, value in enumerate(frame):
                         if value != fx.sent[i]:
                             fx.channels[i].set_values([value])
@@ -407,12 +442,26 @@ class BeatEngine:
         _LOGGER.debug("Random mix: %s for %.0f s", self.coord_now, self._mix_until - now)
         self._notify()
 
+    def _colour_tick(self, now: float, beats: float) -> None:
+        """Colours on Random mix: same or different in turn, each for 20-45 s, changing on a bar line."""
+        if self.colour_mode != COLOUR_MIX:
+            self.colour_now, self._colour_until = self.colour_mode, None
+            return
+        if self._colour_until is not None and not (now >= self._colour_until and int(max(beats, 0)) % 4 == 0):
+            return
+        if self._colour_until is None:
+            self.colour_now = random.choice(COLOUR_MODES)
+        else:
+            self.colour_now = next(c for c in COLOUR_MODES if c != self.colour_now)
+        self._colour_until = now + random.uniform(*MIX_SECONDS)
+        self._notify()
+
     def _frame(self, beats: float, fx: Fixture) -> list[int]:
         steps = max(beats, 0) * SPEEDS.get(self.speed, 1.0)
         step, frac = int(steps), steps % 1
         program = self.program
         moving = program in ("Full show", "Movement")
-        chasing = program in ("Full show", "Colour & gobo", "Pulse", "Strobe")
+        chasing = program in ("Full show", "Colour & gobo", "Pulse", "Strobe", "Fast strobe")
 
         # aim inside the zone: moving along the shape, or held in the middle of it
         u, v = zone_point(self.shape, self.coord_now, fx.index, steps) if moving else (0.0, 0.0)
@@ -425,11 +474,15 @@ class BeatEngine:
         azimuth, elevation = zone_to_angles(u, v, self.zone_width, self.zone_low, self.zone_high)
         pan, tilt = aim_to_dmx(self.calibration.get(fx.prefix), azimuth, elevation)
 
-        colour, gobo = COLOURS[0], GOBOS[0]
+        slot, gobo = 0, GOBOS[0]
         if program == "Colour & gobo":
-            colour, gobo = COLOURS[step % len(COLOURS)], GOBOS[(step // 2) % len(GOBOS)]
+            slot, gobo = step % len(COLOURS), GOBOS[(step // 2) % len(GOBOS)]
         elif chasing:
-            colour, gobo = COLOURS[(step // 4) % len(COLOURS)], GOBOS[(step // 8) % len(GOBOS)]
+            slot, gobo = (step // 4) % len(COLOURS), GOBOS[(step // 8) % len(GOBOS)]
+        # (Different: every second head a few slots on round the wheel - never the same colour)
+        if chasing and self.colour_now == "Different" and fx.index % 2 == 1:
+            slot = (slot + COLOUR_OFFSET) % len(COLOURS)
+        colour = COLOURS[slot]
         if program == "Pulse":
             gobo = GOBOS[0]
 
@@ -440,6 +493,8 @@ class BeatEngine:
         if program == "Strobe":
             # 60 BPM -> slowest strobe, 180 BPM -> fastest
             shutter = round(STROBE_SLOW + (STROBE_FAST - STROBE_SLOW) * min(max((self.bpm - 60) / 120, 0), 1))
+        elif program == "Fast strobe":
+            shutter = STROBE_FAST
 
         values = [0] * CHANNEL_COUNT
         values[CH_PAN], values[CH_PAN_FINE] = pan >> 8, pan & 0xFF
@@ -468,6 +523,8 @@ class BeatEngine:
                 "beat": round((loop.time() - self._anchor) * self.bpm / 60, 3) if self.playing else None,
                 "program": self.program, "speed": self.speed, "shape": self.shape, "coordination": self.coordination,
                 "coordination_now": self.coord_now,
+                "colour_mode": self.colour_mode, "colour_now": self.colour_now,
+                "blackout": self.blackout, "blackout_on_silence": self.blackout_on_silence, "dark": self.dark,
                 "zone": {"width": self.zone_width, "low": self.zone_low, "high": self.zone_high},
                 "colours": [{"name": n, "hex": h} for n, h in COLOUR_WHEEL],
                 "player": self.now.player or None, "artist": self.now.artist or None, "title": self.now.title or None,
@@ -477,7 +534,7 @@ class BeatEngine:
     def status(self) -> dict:
         return {"player": self.now.player or None, "artist": self.now.artist or None,
                 "title": self.now.title or None, "source": self.source, "active": self.active,
-                "coordination_now": self.coord_now,
+                "coordination_now": self.coord_now, "colour_now": self.colour_now, "dark": self.dark,
                 "fixtures": [fx.prefix for fx in self._fixtures]}
 
 
