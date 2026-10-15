@@ -1,0 +1,31 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Beat DMX",
+        "description": "Follows whatever Music Assistant is playing and drives the moving heads on the beat.",
+        "data": {
+          "fixtures": "Fixtures (Art-Net light entity prefixes, comma separated; every second one is mirrored)",
+          "getsongbpm_api_key": "GetSongBPM API key (optional, improves tempo lookups)",
+          "default_bpm": "Tempo to use when none is found"
+        }
+      }
+    },
+    "abort": {
+      "no_music_assistant": "Set up the Music Assistant integration first.",
+      "single_instance_allowed": "Beat DMX is already set up."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Beat DMX",
+        "data": {
+          "fixtures": "Fixtures (Art-Net light entity prefixes, comma separated; every second one is mirrored)",
+          "getsongbpm_api_key": "GetSongBPM API key (optional, improves tempo lookups)",
+          "default_bpm": "Tempo to use when none is found"
+        }
+      }
+    }
+  }
+}
