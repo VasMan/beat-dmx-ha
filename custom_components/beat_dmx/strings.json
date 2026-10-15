@@ -27,5 +27,39 @@
         }
       }
     }
+  },
+  "services": {
+    "set_channel": {
+      "name": "Set DMX channel",
+      "description": "Manual DMX: sets one channel of a fixture and turns Manual DMX on.",
+      "fields": {
+        "fixture": {
+          "name": "Fixture",
+          "description": "Light entity prefix, e.g. light.left_beam_ch"
+        },
+        "channel": {
+          "name": "Channel",
+          "description": "1-11 (1 pan, 2 pan fine, 3 tilt, 4 tilt fine, 5 colour, 6 gobo, 7 shutter, 8 dimmer, 9 pan/tilt speed, 10 function, 11 dim mode)"
+        },
+        "value": {
+          "name": "Value",
+          "description": "0-255"
+        }
+      }
+    },
+    "calibrate": {
+      "name": "Calibrate head",
+      "description": "Uses the head's current pan/tilt: up = pointing straight up, level = level and facing into the room. reverse_pan flips which way pan turns; reset forgets the calibration.",
+      "fields": {
+        "fixture": {
+          "name": "Fixture",
+          "description": "Light entity prefix"
+        },
+        "point": {
+          "name": "Point",
+          "description": "up, level, reverse_pan or reset"
+        }
+      }
+    }
   }
 }

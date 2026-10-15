@@ -1,0 +1,35 @@
+set_channel:
+  fields:
+    fixture:
+      required: true
+      example: light.left_beam_ch
+      selector:
+        text:
+    channel:
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 11
+    value:
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 255
+calibrate:
+  fields:
+    fixture:
+      required: true
+      example: light.left_beam_ch
+      selector:
+        text:
+    point:
+      required: true
+      selector:
+        select:
+          options:
+            - up
+            - level
+            - reverse_pan
+            - reset

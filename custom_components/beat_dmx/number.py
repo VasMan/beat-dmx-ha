@@ -1,4 +1,4 @@
-"""Intensity, aiming and a manual tempo override."""
+"""Intensity, a manual tempo override and the movement zone."""
 from __future__ import annotations
 
 from homeassistant.components.number import NumberEntity, NumberMode
@@ -13,9 +13,9 @@ NUMBERS = [
     # key, name, min, max, step, unit, icon, config
     ("intensity", "Intensity", 0, 100, 1, "%", "mdi:brightness-6", False),
     ("bpm_override", "Tempo override", 0, 220, 1, "BPM", "mdi:metronome", False),
-    ("pan_centre", "Pan centre", 0, 255, 1, None, "mdi:pan-horizontal", True),
-    ("tilt_centre", "Tilt centre", 0, 255, 1, None, "mdi:pan-vertical", True),
-    ("spread", "Movement spread", 0, 100, 1, None, "mdi:arrow-expand-all", True),
+    ("zone_width", "Zone width", 0, 170, 1, "°", "mdi:pan-horizontal", True),
+    ("zone_low", "Lowest beam angle", 0, 90, 1, "°", "mdi:angle-acute", True),
+    ("zone_high", "Highest beam angle", 0, 90, 1, "°", "mdi:angle-obtuse", True),
 ]
 
 

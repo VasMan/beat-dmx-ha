@@ -1,4 +1,4 @@
-"""Program and step speed."""
+"""Program, step speed, movement shape and how the heads move together."""
 from __future__ import annotations
 
 from homeassistant.components.select import SelectEntity
@@ -8,12 +8,15 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from . import BeatConfigEntry
 from .const import PROGRAMS, SPEEDS
 from .entity import BeatEntity
+from .motion import COORDINATION, SHAPES
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: BeatConfigEntry, add: AddEntitiesCallback) -> None:
     engine = entry.runtime_data
     add([BeatSelect(engine, "program", "Program", PROGRAMS, "mdi:animation-play"),
-         BeatSelect(engine, "speed", "Step speed", list(SPEEDS), "mdi:speedometer")])
+         BeatSelect(engine, "speed", "Step speed", list(SPEEDS), "mdi:speedometer"),
+         BeatSelect(engine, "shape", "Movement shape", SHAPES, "mdi:vector-curve"),
+         BeatSelect(engine, "coordination", "Coordination", COORDINATION, "mdi:account-multiple")])
 
 
 class BeatSelect(BeatEntity, SelectEntity):

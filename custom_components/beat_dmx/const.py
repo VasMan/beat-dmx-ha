@@ -22,6 +22,3 @@ STROBE_SLOW, STROBE_FAST = 16, 131
 PT_SPEED_FAST = 0
 FUNCTION_NONE = 0
 DIM_MODE_STANDARD = 0
-
-# square-then-cross pattern around the centre point, in units of the spread
-PATTERN = [(-1, -1), (1, -1), (1, 1), (-1, 1), (0, -1), (1, 0), (0, 1), (-1, 0)]

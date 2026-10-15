@@ -33,7 +33,20 @@ channel goes back to what its light entity says.
 
 Version 0.1 knows one fixture: the **BeamZ Panther 40 LED Spot** in **11-channel mode**
 (pan, pan fine, tilt, tilt fine, colour, gobo, shutter, dimmer, pan/tilt speed, function, dim mode).
-Every second fixture in the list is mirrored on pan.
+Pan and tilt are sent as 16-bit values (the fine channels are used).
+
+## Movement zone and calibration
+
+The heads aim inside a **zone**: up to *Zone width* degrees either side of each head's forward direction,
+with the beam between the *Lowest* and *Highest beam angle* above level. The zone is the same for every
+head, seen from that head. **Movement shapes**: Square, Circle, Figure 8, Sweep, Random. **Coordination**
+of every second head: Mirror, Unison (both the same), Opposite (mirrored left/right and up/down) or
+Follow (one step behind).
+
+Each head is calibrated once, with **Manual DMX** on (the live card's sliders, or the pan/tilt pad):
+aim it straight up and press *It points straight up*; aim it level into the middle of the room and press
+*It points level, into the room*. *Flip pan direction* if it turns the wrong way. Until then a floor-standing
+head with tilt 128 = straight up and pan 128 = forward is assumed.
 
 ## Installation
 
@@ -53,8 +66,10 @@ Then Settings → Devices & services → Add integration → **Beat DMX**, and e
 | Now following (sensor) | track and player |
 | Program (select) | Full show, Movement, Colour & gobo, Pulse, Strobe |
 | Step speed (select) | Half, Normal, Double |
+| Manual DMX (switch) | hold values set by hand (testing, calibrating) |
+| Movement shape, Coordination (selects) | how the heads move, and together |
 | Intensity, Tempo override (numbers) | override 0 = automatic |
-| Pan centre, Tilt centre, Movement spread (numbers) | aiming |
+| Zone width, Lowest / Highest beam angle (numbers) | the movement zone |
 | Tap tempo (button) | 4+ taps set the tempo for the track; every tap re-aligns the beat |
 
 ## Live DMX card
@@ -69,7 +84,13 @@ fixtures:            # optional: show these first, in this order
 layout: stacked      # optional: fixtures under each other instead of side by side
 ```
 
-No Lovelace resource is needed; the card is loaded automatically.
+No Lovelace resource is needed; the card is loaded automatically. It shows where the tempo was found,
+and with Manual DMX on its bars become sliders, the pan/tilt pad can be dragged and each head calibrated.
+
+## Services
+
+- `beat_dmx.set_channel` (fixture, channel 1-11, value 0-255): manual DMX (turns Manual DMX on)
+- `beat_dmx.calibrate` (fixture, point: `up`, `level`, `reverse_pan`, `reset`)
 
 ## Notes
 

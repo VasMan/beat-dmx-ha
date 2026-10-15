@@ -14,17 +14,19 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.storage import Store
 
 from .bpm import BpmLookup, track_key
-from .const import (CH_COLOUR, CH_DIM_MODE, CH_DIMMER, CH_FUNCTION, CH_GOBO, CH_PAN, CH_PT_SPEED,
-                    CH_SHUTTER, CH_TILT, CHANNEL_COUNT, COLOURS, DIM_MODE_STANDARD, DOMAIN,
-                    FUNCTION_NONE, GOBOS, PATTERN, PROGRAMS, PT_SPEED_FAST, SHUTTER_OPEN, SPEEDS,
-                    STROBE_FAST, STROBE_SLOW)
+from .const import (CH_COLOUR, CH_DIM_MODE, CH_DIMMER, CH_FUNCTION, CH_GOBO, CH_PAN, CH_PAN_FINE,
+                    CH_PT_SPEED, CH_SHUTTER, CH_TILT, CH_TILT_FINE, CHANNEL_COUNT, COLOURS,
+                    DIM_MODE_STANDARD, DOMAIN, FUNCTION_NONE, GOBOS, PROGRAMS, PT_SPEED_FAST, SHUTTER_OPEN,
+                    SPEEDS, STROBE_FAST, STROBE_SLOW)
+from .motion import COORDINATION, DEFAULT_CAL, SHAPES, aim_to_dmx, zone_point, zone_to_angles
 
 _LOGGER = logging.getLogger(__name__)
 
 POLL_SECONDS = 2
 FPS = 25
 TAP_RESET_SECONDS = 2.0
-SETTINGS = ("enabled", "program", "speed", "intensity", "pan_centre", "tilt_centre", "spread", "bpm_override")
+SETTINGS = ("enabled", "program", "speed", "intensity", "bpm_override", "shape", "coordination",
+            "zone_width", "zone_low", "zone_high", "calibration")
 
 
 @dataclass
@@ -42,11 +44,16 @@ class NowPlaying:
 @dataclass
 class Fixture:
     prefix: str
-    mirrored: bool
+    index: int
     channels: list = field(default_factory=list)  # pyartnet channels owned by artnet_led's entities
     entities: list = field(default_factory=list)
     sent: list = field(default_factory=list)
     missing_logged: bool = False
+    manual: list = field(default_factory=list)  # values held while manual DMX is on
+
+    @property
+    def name(self) -> str:
+        return self.prefix.split(".", 1)[-1].removesuffix("_ch").replace("_", " ").title()
 
 
 class BeatEngine:
@@ -54,7 +61,7 @@ class BeatEngine:
         self.hass = hass
         self._store = Store(hass, 1, f"{DOMAIN}.state")
         self._lookup = BpmLookup(async_get_clientsession(hass), {}, getsongbpm_key)
-        self._fixtures = [Fixture(p.strip(), i % 2 == 1) for i, p in enumerate(fixtures) if p.strip()]
+        self._fixtures = [Fixture(p, i) for i, p in enumerate(p.strip() for p in fixtures if p.strip())]
         self.default_bpm = default_bpm
         self._listeners: list[Callable[[], None]] = []
         self._tasks: list[asyncio.Task] = []
@@ -66,10 +73,14 @@ class BeatEngine:
         self.program = PROGRAMS[0]
         self.speed = "Normal"
         self.intensity = 100.0
-        self.pan_centre = 128.0
-        self.tilt_centre = 128.0
-        self.spread = 30.0
         self.bpm_override = 0.0
+        self.shape = SHAPES[0]
+        self.coordination = COORDINATION[0]
+        self.zone_width = 60.0  # degrees either side of forward
+        self.zone_low = 30.0  # beam elevation above level, degrees
+        self.zone_high = 75.0
+        self.calibration: dict[str, dict] = {}  # fixture prefix -> DEFAULT_CAL keys
+        self.manual = False  # not persisted: manual DMX is for testing
 
         # live state
         self.now = NowPlaying()
@@ -87,6 +98,10 @@ class BeatEngine:
                 setattr(self, name, saved[name])
         if self.program not in PROGRAMS:
             self.program = PROGRAMS[0]
+        if self.shape not in SHAPES:
+            self.shape = SHAPES[0]
+        if self.coordination not in COORDINATION:
+            self.coordination = COORDINATION[0]
         self._lookup.cache.update(saved.get("bpm_cache") or {})
         self._tasks.append(self.hass.async_create_background_task(self._poll_loop(), f"{DOMAIN} poll"))
 
@@ -140,7 +155,54 @@ class BeatEngine:
 
     @property
     def active(self) -> bool:
-        return self.enabled and self.playing
+        return self.manual or (self.enabled and self.playing)
+
+    # ---- manual DMX and calibration ------------------------------------------------------
+    def set_manual(self, on: bool) -> None:
+        if on and not self.manual:
+            self._bind_fixtures()
+            for fx in self._fixtures:  # start from what is going out now
+                fx.manual = [v if v is not None else 0 for v in self._read(fx)]
+        self.set("manual", on)
+
+    def _fixture(self, ref: str) -> Fixture:
+        for fx in self._fixtures:
+            if ref in (fx.prefix, fx.name, fx.name.lower()):
+                return fx
+        raise ValueError(f"Unknown fixture {ref!r}; known: {', '.join(fx.prefix for fx in self._fixtures)}")
+
+    def set_channel(self, ref: str, channel: int, value: int) -> None:
+        """Manual DMX: channel 1-11 of a fixture (turns manual DMX on)."""
+        fx = self._fixture(ref)
+        if not self.manual:
+            self.set_manual(True)
+        if not fx.manual:
+            raise ValueError(f"{fx.prefix} has no Art-Net channels yet")
+        fx.manual[channel - 1] = int(min(max(value, 0), 255))
+        self._notify()
+
+    def calibrate(self, ref: str, point: str) -> None:
+        """Take the head's current manual pan/tilt as 'up' (straight up) or 'level' (level, facing
+        into the room), or flip which way pan turns."""
+        fx = self._fixture(ref)
+        cal = {**DEFAULT_CAL, **self.calibration.get(fx.prefix, {})}
+        values = fx.manual if self.manual and fx.manual else self._read(fx)
+        pan = (values[CH_PAN] or 0) + (values[CH_PAN_FINE] or 0) / 256
+        tilt = (values[CH_TILT] or 0) + (values[CH_TILT_FINE] or 0) / 256
+        if point == "up":
+            cal["tilt_up"] = tilt
+        elif point == "level":
+            cal["pan_forward"], cal["tilt_level"] = pan, tilt
+        elif point == "reverse_pan":
+            cal["pan_reverse"] = not cal["pan_reverse"]
+        elif point == "reset":
+            cal = dict(DEFAULT_CAL)
+        else:
+            raise ValueError(f"Unknown calibration point {point!r}")
+        self.calibration = {**self.calibration, fx.prefix: cal}
+        _LOGGER.info("Calibration of %s: %s", fx.prefix, cal)
+        self._save()
+        self._notify()
 
     def tap(self) -> None:
         t = asyncio.get_running_loop().time()
@@ -260,6 +322,15 @@ class BeatEngine:
             fx.entities, fx.channels, fx.sent = entities, [e._channel for e in entities], [None] * CHANNEL_COUNT
         return any(fx.channels for fx in self._fixtures)
 
+    def _read(self, fx: Fixture) -> list:
+        values = []
+        for channel in fx.channels:
+            try:
+                values.append(int(channel.get_values()[0]))
+            except Exception:
+                values.append(None)
+        return values or [None] * CHANNEL_COUNT
+
     def _update_render(self) -> None:
         if self.active and self._render_task is None:
             if not self._bind_fixtures():
@@ -288,7 +359,8 @@ class BeatEngine:
                 for fx in self._fixtures:
                     if not fx.channels:
                         continue
-                    for i, value in enumerate(self._frame(beats, fx.mirrored)):
+                    frame = fx.manual if self.manual and fx.manual else self._frame(beats, fx)
+                    for i, value in enumerate(frame):
                         if value != fx.sent[i]:
                             fx.channels[i].set_values([value])
                             fx.sent[i] = value
@@ -299,21 +371,17 @@ class BeatEngine:
             _LOGGER.exception("Beat render stopped")
             self._render_task = None
 
-    def _frame(self, beats: float, mirrored: bool) -> list[int]:
+    def _frame(self, beats: float, fx: Fixture) -> list[int]:
         steps = max(beats, 0) * SPEEDS.get(self.speed, 1.0)
         step, frac = int(steps), steps % 1
         program = self.program
         moving = program in ("Full show", "Movement")
         chasing = program in ("Full show", "Colour & gobo", "Pulse", "Strobe")
 
-        pan, tilt = self.pan_centre, self.tilt_centre
-        if moving:
-            (x0, y0), (x1, y1) = PATTERN[(step - 1) % len(PATTERN)], PATTERN[step % len(PATTERN)]
-            ease = 0.5 - 0.5 * math.cos(math.pi * min(frac / 0.7, 1.0))  # travel in 70% of the step, then hold
-            pan += (x0 + (x1 - x0) * ease) * self.spread
-            tilt += (y0 + (y1 - y0) * ease) * self.spread
-        if mirrored:
-            pan = 2 * self.pan_centre - pan
+        # aim inside the zone: moving along the shape, or held in the middle of it
+        u, v = zone_point(self.shape, self.coordination, fx.index, steps) if moving else (0.0, 0.0)
+        azimuth, elevation = zone_to_angles(u, v, self.zone_width, self.zone_low, self.zone_high)
+        pan, tilt = aim_to_dmx(self.calibration.get(fx.prefix), azimuth, elevation)
 
         colour, gobo = COLOURS[0], GOBOS[0]
         if program == "Colour & gobo":
@@ -332,8 +400,8 @@ class BeatEngine:
             shutter = round(STROBE_SLOW + (STROBE_FAST - STROBE_SLOW) * min(max((self.bpm - 60) / 120, 0), 1))
 
         values = [0] * CHANNEL_COUNT
-        values[CH_PAN] = _byte(pan)
-        values[CH_TILT] = _byte(tilt)
+        values[CH_PAN], values[CH_PAN_FINE] = pan >> 8, pan & 0xFF
+        values[CH_TILT], values[CH_TILT_FINE] = tilt >> 8, tilt & 0xFF
         values[CH_COLOUR] = colour
         values[CH_GOBO] = gobo
         values[CH_SHUTTER] = shutter
@@ -346,24 +414,20 @@ class BeatEngine:
     def live(self) -> dict:
         """What is going out on the wire right now, read back from the Art-Net channels."""
         self._bind_fixtures()
-        fixtures = []
-        for fx in self._fixtures:
-            values = []
-            for channel in fx.channels:
-                try:
-                    values.append(int(channel.get_values()[0]))
-                except Exception:
-                    values.append(None)
-            fixtures.append({
-                "name": fx.prefix.split(".", 1)[-1].removesuffix("_ch").replace("_", " ").title(),
-                "prefix": fx.prefix, "mirrored": fx.mirrored,
-                "start": fx.channels[0]._start if fx.channels else None,
-                "values": values or [None] * CHANNEL_COUNT})
+        fixtures = [{
+            "name": fx.name, "prefix": fx.prefix, "index": fx.index,
+            "start": fx.channels[0]._start if fx.channels else None,
+            "values": self._read(fx),
+            "calibration": {**DEFAULT_CAL, **self.calibration.get(fx.prefix, {})},
+        } for fx in self._fixtures]
         loop = asyncio.get_running_loop()
-        return {"active": self.active, "enabled": self.enabled, "bpm": round(self.bpm, 1), "source": self.source,
+        return {"active": self.active, "enabled": self.enabled, "manual": self.manual,
+                "bpm": round(self.bpm, 1), "source": self.source,
                 "beat": round((loop.time() - self._anchor) * self.bpm / 60, 3) if self.playing else None,
-                "program": self.program, "speed": self.speed, "player": self.now.player or None,
-                "artist": self.now.artist or None, "title": self.now.title or None, "fixtures": fixtures}
+                "program": self.program, "speed": self.speed, "shape": self.shape, "coordination": self.coordination,
+                "zone": {"width": self.zone_width, "low": self.zone_low, "high": self.zone_high},
+                "player": self.now.player or None, "artist": self.now.artist or None, "title": self.now.title or None,
+                "fixtures": fixtures}
 
     @property
     def status(self) -> dict:

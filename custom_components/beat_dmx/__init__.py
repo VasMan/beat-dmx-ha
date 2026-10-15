@@ -11,14 +11,14 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.typing import ConfigType
 
-from . import websocket
+from . import services, websocket
 from .const import (CONF_DEFAULT_BPM, CONF_FIXTURES, CONF_GETSONGBPM_KEY, DEFAULT_BPM, DEFAULT_FIXTURES,
                     DOMAIN)
 from .engine import BeatEngine
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 CARD_URL = f"/{DOMAIN}/beat-dmx-card.js"
-CARD_VERSION = 3
+CARD_VERSION = 4
 
 PLATFORMS = [Platform.SWITCH, Platform.SENSOR, Platform.SELECT, Platform.NUMBER, Platform.BUTTON]
 
@@ -28,6 +28,7 @@ BeatConfigEntry = ConfigEntry[BeatEngine]
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """The live-values websocket and the dashboard card (custom:beat-dmx-card) are served by the integration."""
     websocket.async_register(hass)
+    services.async_register(hass)
     await hass.http.async_register_static_paths(
         [StaticPathConfig(CARD_URL, str(Path(__file__).parent / "www" / "beat-dmx-card.js"), False)])
     add_extra_js_url(hass, f"{CARD_URL}?v={CARD_VERSION}")
