@@ -178,6 +178,8 @@ class BeatEngine:
             self.set_manual(True)
         if not fx.manual:
             raise ValueError(f"{fx.prefix} has no Art-Net channels yet")
+        if not 1 <= channel <= CHANNEL_COUNT:
+            raise ValueError(f"Channel {channel} is not 1-{CHANNEL_COUNT}")
         fx.manual[channel - 1] = int(min(max(value, 0), 255))
         self._notify()
 

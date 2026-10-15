@@ -9,12 +9,13 @@ from homeassistant.core import HomeAssistant, callback
 
 from .const import DOMAIN
 
-PUSH_SECONDS = 0.1
+PUSH_SECONDS = 0.2  # (the card animates the beat itself; fewer frames for tablets on flaky links)
 
 
 @callback
 def async_register(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_subscribe)
+    websocket_api.async_register_command(hass, ws_set_channels)
 
 
 def _engine(hass: HomeAssistant):
@@ -30,11 +31,34 @@ async def ws_subscribe(hass: HomeAssistant, connection: websocket_api.ActiveConn
         while True:
             engine = _engine(hass)
             data = engine.live() if engine else {"error": "Beat DMX is not loaded"}
-            if data != last:
+            # (the beat moves on every time; it alone is no reason to send - the card counts beats itself)
+            same = {**data, "beat": None} == {**(last or {}), "beat": None}
+            if not same:
                 connection.send_message(websocket_api.event_message(msg["id"], data))
                 last = data
             await asyncio.sleep(PUSH_SECONDS)
 
     task = hass.async_create_background_task(_push(), f"{DOMAIN} live push")
     connection.subscriptions[msg["id"]] = task.cancel
+    connection.send_result(msg["id"])
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): f"{DOMAIN}/set_channels",
+    vol.Required("fixture"): str,
+    vol.Required("values"): {vol.Coerce(int): vol.All(vol.Coerce(int), vol.Range(min=0, max=255))},
+})
+@callback
+def ws_set_channels(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """Manual DMX from the card: several channels (1-11) of one fixture in one message."""
+    engine = _engine(hass)
+    if engine is None:
+        connection.send_error(msg["id"], "not_loaded", "Beat DMX is not loaded")
+        return
+    try:
+        for channel, value in msg["values"].items():
+            engine.set_channel(msg["fixture"], channel, value)
+    except (ValueError, IndexError) as err:
+        connection.send_error(msg["id"], "invalid", str(err))
+        return
     connection.send_result(msg["id"])

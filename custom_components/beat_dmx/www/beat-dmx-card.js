@@ -3,7 +3,7 @@
 // Options: fixtures: [prefix, ...] shows those fixtures in that order (others after them);
 //          layout: stacked puts the fixtures under each other instead of side by side;
 //          manual_entity: the Manual DMX switch (switch.beat_dmx_manual_dmx by default).
-// With Manual DMX on, the bars become sliders and the pan/tilt pad can be dragged (beat_dmx.set_channel),
+// With Manual DMX on, the bars become sliders and the pan/tilt pad can be dragged (beat_dmx/set_channels),
 // and each head can be calibrated from where it points (beat_dmx.calibrate).
 
 const range = (v, table) => {
@@ -65,7 +65,7 @@ const tempoStatus = (source) => {
   return { text: hit[1] + (/live takes only/.test(s) ? " – live versions only, may be off" : ""), cls: hit[2] };
 };
 
-const SEND_MS = 80; // manual DMX: at most one service call per channel this often while dragging
+const SEND_MS = 150; // manual DMX: at most one message per fixture this often while dragging
 const HOLD_MS = 600; // and the slider is left alone for this long after it was moved
 
 class BeatDmxCard extends HTMLElement {
@@ -102,6 +102,8 @@ class BeatDmxCard extends HTMLElement {
   disconnectedCallback() {
     if (this._unsub) this._unsub.then((u) => u()).catch(() => {});
     this._unsub = null;
+    if (this._beatTimer) clearInterval(this._beatTimer);
+    this._beatTimer = null;
   }
 
   getCardSize() {
@@ -135,9 +137,15 @@ class BeatDmxCard extends HTMLElement {
   _flush() {
     this._timer = null;
     if (!this._hass) return;
-    const calls = [...this._pending.values()];
+    // one websocket message per fixture with all its changed channels (beat_dmx/set_channels)
+    const byFixture = new Map();
+    this._pending.forEach(({ fixture, channel, value }) => {
+      if (!byFixture.has(fixture)) byFixture.set(fixture, {});
+      byFixture.get(fixture)[channel] = value;
+    });
     this._pending.clear();
-    calls.forEach((data) => this._hass.callService("beat_dmx", "set_channel", data).catch((e) => this._toast(e)));
+    byFixture.forEach((values, fixture) =>
+      this._hass.connection.sendMessagePromise({ type: "beat_dmx/set_channels", fixture, values }).catch((e) => this._toast(e)));
   }
 
   _held(fixture, channel) {
@@ -207,7 +215,7 @@ class BeatDmxCard extends HTMLElement {
         .pad::before, .pad::after { content: ""; position: absolute; background: color-mix(in srgb, var(--bd-muted) 30%, transparent); }
         .pad::before { left: 50%; top: 0; bottom: 0; width: 1px; } .pad::after { top: 50%; left: 0; right: 0; height: 1px; }
         .dot { position: absolute; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; pointer-events: none;
-               background: #fff; transition: left 100ms linear, top 100ms linear, opacity 100ms linear, box-shadow 100ms linear; }
+               background: #fff; transition: left 200ms linear, top 200ms linear, opacity 200ms linear, box-shadow 200ms linear; }
         .padlabel { position: absolute; right: 8px; bottom: 4px; font-size: 11px; color: var(--bd-muted); pointer-events: none; }
         .padhint { position: absolute; left: 8px; top: 4px; font-size: 11px; color: var(--bd-warn); display: none; pointer-events: none; }
         .manual .padhint { display: block; }
@@ -222,7 +230,7 @@ class BeatDmxCard extends HTMLElement {
         .row .addr, .row .val { color: var(--bd-muted); font-variant-numeric: tabular-nums; text-align: right; }
         .row .val { color: var(--primary-text-color); }
         .bar { height: 8px; border-radius: 4px; background: var(--bd-track); overflow: hidden; }
-        .bar b { display: block; height: 100%; width: 0; background: var(--bd-accent); transition: width 100ms linear; }
+        .bar b { display: block; height: 100%; width: 0; background: var(--bd-accent); transition: width 200ms linear; }
         .row input { display: none; width: 100%; margin: 0; accent-color: var(--bd-warn); }
         .manual .row input { display: block; } .manual .row .bar { display: none; }
         .row .txt { color: var(--bd-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -271,9 +279,12 @@ class BeatDmxCard extends HTMLElement {
     e.state.textContent = d.manual ? "Manual DMX" : d.active ? "Driving" : d.enabled ? "Waiting for music" : "Beat sync off";
     e.state.className = `chip ${d.manual ? "manual" : d.active ? "on" : ""}`;
     e.bpm.textContent = d.bpm?.toFixed(1) ?? "–";
-    const beat = d.beat == null ? -1 : Math.floor(d.beat);
-    const onBeat = d.beat != null && d.beat - beat < 0.25;
-    e.beats.forEach((b, i) => b.classList.toggle("lit", onBeat && ((beat % 4) + 4) % 4 === i));
+    // the beat comes about 5x a second; in between the card counts on from it
+    this._beat0 = d.beat;
+    this._beatAt = performance.now();
+    if (d.beat != null && !this._beatTimer) this._beatTimer = setInterval(() => this._safe(() => this._tickBeat()), 50);
+    if (d.beat == null && this._beatTimer) { clearInterval(this._beatTimer); this._beatTimer = null; }
+    this._tickBeat();
 
     const tempo = tempoStatus(d.source);
     e.found.textContent = tempo.text;
@@ -292,6 +303,15 @@ class BeatDmxCard extends HTMLElement {
       this._buildFixtures(fixtures);
     }
     fixtures.forEach((f, i) => this._updateFixture(this._fx[i], f, d.manual));
+  }
+
+  _tickBeat() {
+    const d = this._d;
+    if (!this._els || !d) return;
+    const now = this._beat0 == null ? null : this._beat0 + ((performance.now() - this._beatAt) / 1000) * (d.bpm / 60);
+    const beat = now == null ? -1 : Math.floor(now);
+    const onBeat = now != null && now - beat < 0.25;
+    this._els.beats.forEach((b, i) => b.classList.toggle("lit", onBeat && ((beat % 4) + 4) % 4 === i));
   }
 
   _ordered(fixtures) {
@@ -394,6 +414,7 @@ class BeatDmxCard extends HTMLElement {
   }
 }
 
-customElements.define("beat-dmx-card", BeatDmxCard);
+// (the file can be loaded twice, e.g. after the app reconnects: define once)
+if (!customElements.get("beat-dmx-card")) customElements.define("beat-dmx-card", BeatDmxCard);
 window.customCards = window.customCards || [];
-window.customCards.push({ type: "beat-dmx-card", name: "Beat DMX live view", description: "Live DMX values of the fixtures Beat DMX controls, with manual DMX for testing" });
+if (!window.customCards.some((c) => c.type === "beat-dmx-card")) window.customCards.push({ type: "beat-dmx-card", name: "Beat DMX live view", description: "Live DMX values of the fixtures Beat DMX controls, with manual DMX for testing" });
