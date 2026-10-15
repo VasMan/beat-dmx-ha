@@ -40,8 +40,9 @@ Pan and tilt are sent as 16-bit values (the fine channels are used).
 The heads aim inside a **zone**: up to *Zone width* degrees either side of each head's forward direction,
 with the beam between the *Lowest* and *Highest beam angle* above level. The zone is the same for every
 head, seen from that head. **Movement shapes**: Square, Circle, Figure 8, Sweep, Random. **Coordination**
-of every second head: Mirror, Unison (both the same), Opposite (mirrored left/right and up/down) or
-Follow (one step behind).
+of every second head: Mirror, Unison (both the same), Opposite (mirrored left/right and up/down),
+Follow (one step behind) or Random mix (one of the four at a time, moving on to another at random
+after 20-45 s, on a bar line, the second head gliding into the new mode over a beat).
 
 Each head is calibrated once, with **Manual DMX** on (the live card's sliders, or the pan/tilt pad):
 aim it straight up and press *It points straight up*; aim it level into the middle of the room and press
@@ -82,6 +83,7 @@ fixtures:            # optional: show these first, in this order
   - light.right_beam_ch
   - light.left_beam_ch
 layout: stacked      # optional: fixtures under each other instead of side by side
+title: Movers – Live DMX   # optional heading
 ```
 
 The integration copies the card to `www/beat_dmx/` and adds it to the Lovelace resources itself (storage-mode dashboards; in YAML mode add `/local/beat_dmx/beat-dmx-card.js` as a JavaScript module). It shows where the tempo was found,

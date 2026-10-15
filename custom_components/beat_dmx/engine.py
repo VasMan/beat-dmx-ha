@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import random
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -18,7 +19,7 @@ from .const import (CH_COLOUR, CH_DIM_MODE, CH_DIMMER, CH_FUNCTION, CH_GOBO, CH_
                     CH_PT_SPEED, CH_SHUTTER, CH_TILT, CH_TILT_FINE, CHANNEL_COUNT, COLOUR_WHEEL, COLOURS,
                     DIM_MODE_STANDARD, DOMAIN, FUNCTION_NONE, GOBOS, PROGRAMS, PT_SPEED_FAST, SHUTTER_OPEN,
                     SPEEDS, STROBE_FAST, STROBE_SLOW)
-from .motion import COORDINATION, DEFAULT_CAL, SHAPES, aim_to_dmx, zone_point, zone_to_angles
+from .motion import COORDINATION, DEFAULT_CAL, MIX, MIX_SECONDS, SHAPES, aim_to_dmx, zone_point, zone_to_angles
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -88,6 +89,11 @@ class BeatEngine:
         self.bpm_source = "default"
         self.tap_bpm: float | None = None
         self._anchor = 0.0  # loop time of beat 0
+        # Random mix: the mode playing now, the one before it (blended over a beat) and when it changes
+        self.coord_now = COORDINATION[0]
+        self._coord_prev: str | None = None
+        self._coord_from_beat = 0.0
+        self._mix_until: float | None = None
         self._lookup_task: asyncio.Task | None = None
 
     # ---- lifecycle -------------------------------------------------------------------------
@@ -100,7 +106,7 @@ class BeatEngine:
             self.program = PROGRAMS[0]
         if self.shape not in SHAPES:
             self.shape = SHAPES[0]
-        if self.coordination not in COORDINATION:
+        if self.coordination not in (*COORDINATION, MIX):
             self.coordination = COORDINATION[0]
         self._lookup.cache.update(saved.get("bpm_cache") or {})
         self._tasks.append(self.hass.async_create_background_task(self._poll_loop(), f"{DOMAIN} poll"))
@@ -370,6 +376,7 @@ class BeatEngine:
         try:
             while True:
                 beats = (loop.time() - self._anchor) * self.bpm / 60
+                self._mix_tick(loop.time(), beats)
                 for fx in self._fixtures:
                     if not fx.channels:
                         continue
@@ -385,6 +392,21 @@ class BeatEngine:
             _LOGGER.exception("Beat render stopped")
             self._render_task = None
 
+    def _mix_tick(self, now: float, beats: float) -> None:
+        """Random mix: after 20-45 s (at random) move on to another of the four modes, on a bar line."""
+        if self.coordination != MIX:
+            self.coord_now, self._mix_until = self.coordination, None
+            return
+        due = self._mix_until is None or (now >= self._mix_until and int(max(beats, 0)) % 4 == 0)
+        if not due:
+            return
+        self._coord_prev = self.coord_now if self._mix_until is not None else None
+        self.coord_now = random.choice([c for c in COORDINATION if c != self.coord_now])
+        self._coord_from_beat = beats
+        self._mix_until = now + random.uniform(*MIX_SECONDS)
+        _LOGGER.debug("Random mix: %s for %.0f s", self.coord_now, self._mix_until - now)
+        self._notify()
+
     def _frame(self, beats: float, fx: Fixture) -> list[int]:
         steps = max(beats, 0) * SPEEDS.get(self.speed, 1.0)
         step, frac = int(steps), steps % 1
@@ -393,7 +415,13 @@ class BeatEngine:
         chasing = program in ("Full show", "Colour & gobo", "Pulse", "Strobe")
 
         # aim inside the zone: moving along the shape, or held in the middle of it
-        u, v = zone_point(self.shape, self.coordination, fx.index, steps) if moving else (0.0, 0.0)
+        u, v = zone_point(self.shape, self.coord_now, fx.index, steps) if moving else (0.0, 0.0)
+        # (Random mix: for a beat after a change the head glides from where the old mode had it)
+        glide = beats - self._coord_from_beat
+        if moving and self._coord_prev and 0 <= glide < 1:
+            u0, v0 = zone_point(self.shape, self._coord_prev, fx.index, steps)
+            k = 0.5 - 0.5 * math.cos(math.pi * glide)
+            u, v = u0 + (u - u0) * k, v0 + (v - v0) * k
         azimuth, elevation = zone_to_angles(u, v, self.zone_width, self.zone_low, self.zone_high)
         pan, tilt = aim_to_dmx(self.calibration.get(fx.prefix), azimuth, elevation)
 
@@ -439,6 +467,7 @@ class BeatEngine:
                 "bpm": round(self.bpm, 1), "source": self.source,
                 "beat": round((loop.time() - self._anchor) * self.bpm / 60, 3) if self.playing else None,
                 "program": self.program, "speed": self.speed, "shape": self.shape, "coordination": self.coordination,
+                "coordination_now": self.coord_now,
                 "zone": {"width": self.zone_width, "low": self.zone_low, "high": self.zone_high},
                 "colours": [{"name": n, "hex": h} for n, h in COLOUR_WHEEL],
                 "player": self.now.player or None, "artist": self.now.artist or None, "title": self.now.title or None,
@@ -448,6 +477,7 @@ class BeatEngine:
     def status(self) -> dict:
         return {"player": self.now.player or None, "artist": self.now.artist or None,
                 "title": self.now.title or None, "source": self.source, "active": self.active,
+                "coordination_now": self.coord_now,
                 "fixtures": [fx.prefix for fx in self._fixtures]}
 
 

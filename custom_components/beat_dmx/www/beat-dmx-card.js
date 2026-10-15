@@ -2,7 +2,8 @@
 // over the websocket (beat_dmx/subscribe). Loaded as the Lovelace resource /local/beat_dmx/beat-dmx-card.js (copied there by the integration). Channel meanings: BeamZ Panther 40 LED Spot, 11-channel mode.
 // Options: fixtures: [prefix, ...] shows those fixtures in that order (others after them);
 //          layout: stacked puts the fixtures under each other instead of side by side;
-//          manual_entity: the Manual DMX switch (switch.beat_dmx_manual_dmx by default).
+//          manual_entity: the Manual DMX switch (switch.beat_dmx_manual_dmx by default);
+//          title: the card's heading ("Live DMX" by default).
 // With Manual DMX on, the bars become sliders and the pan/tilt pad can be dragged (beat_dmx/set_channels),
 // and each head can be calibrated from where it points (beat_dmx.calibrate).
 
@@ -254,7 +255,7 @@ class BeatDmxCard extends HTMLElement {
       </style>
       <ha-card>
         <div class="head">
-          <div class="title">Live DMX</div>
+          <div class="title" id="title">Live DMX</div>
           <span class="chip" id="state">…</span>
           <button id="manual" title="Set DMX values by hand, for testing and calibrating">Manual DMX</button>
           <div class="beats" id="beats"><i></i><i></i><i></i><i></i></div>
@@ -275,6 +276,7 @@ class BeatDmxCard extends HTMLElement {
       found: $("found"), track: $("track"), show: $("show"), beats: [...$("beats").children],
       fixtures: $("fixtures"), credit: $("credit"), err: $("err") };
     this._els.manual.addEventListener("click", () => this._safe(() => this._toggleManual()));
+    root.getElementById("title").textContent = this._config.title || "Live DMX";
     this._fx = [];
   }
 
@@ -306,7 +308,8 @@ class BeatDmxCard extends HTMLElement {
     e.found.title = `source: ${d.source}`;
     e.track.textContent = d.title ? `${d.artist ? `${d.artist} – ` : ""}${d.title}${d.player ? ` · ${d.player}` : ""}` : "Nothing playing";
     e.track.title = e.track.textContent;
-    e.show.textContent = `${d.program} · ${d.shape} · ${d.coordination}` +
+    const coord = d.coordination === "Random mix" && d.coordination_now ? `Random mix (now ${d.coordination_now})` : d.coordination;
+    e.show.textContent = `${d.program} · ${d.shape} · ${coord}` +
       (d.zone ? ` · zone ±${Math.round(d.zone.width)}°, ${Math.round(d.zone.low)}–${Math.round(d.zone.high)}° up` : "");
     e.credit.hidden = !String(d.source || "").startsWith("getsongbpm");
 

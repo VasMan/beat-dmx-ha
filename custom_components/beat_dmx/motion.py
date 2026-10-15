@@ -11,6 +11,8 @@ import random
 
 SHAPES = ["Square", "Circle", "Figure 8", "Sweep", "Random"]
 COORDINATION = ["Mirror", "Unison", "Opposite", "Follow"]
+MIX = "Random mix"  # one of the four at a time, changing at random after MIX_SECONDS
+MIX_SECONDS = (20, 45)
 
 # square-then-cross corners, one per step
 SQUARE = [(-1, -1), (1, -1), (1, 1), (-1, 1), (0, -1), (1, 0), (0, 1), (-1, 0)]

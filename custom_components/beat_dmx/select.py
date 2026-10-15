@@ -8,7 +8,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from . import BeatConfigEntry
 from .const import PROGRAMS, SPEEDS
 from .entity import BeatEntity
-from .motion import COORDINATION, SHAPES
+from .motion import COORDINATION, MIX, SHAPES
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: BeatConfigEntry, add: AddEntitiesCallback) -> None:
@@ -16,7 +16,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: BeatConfigEntry, add: Ad
     add([BeatSelect(engine, "program", "Program", PROGRAMS, "mdi:animation-play"),
          BeatSelect(engine, "speed", "Step speed", list(SPEEDS), "mdi:speedometer"),
          BeatSelect(engine, "shape", "Movement shape", SHAPES, "mdi:vector-curve"),
-         BeatSelect(engine, "coordination", "Coordination", COORDINATION, "mdi:account-multiple")])
+         BeatSelect(engine, "coordination", "Coordination", [*COORDINATION, MIX], "mdi:account-multiple")])
 
 
 class BeatSelect(BeatEntity, SelectEntity):
