@@ -11,12 +11,25 @@ const range = (v, table) => {
   return "";
 };
 const pct = (v, lo = 0, hi = 255) => `${Math.round(((v - lo) / (hi - lo)) * 100)}%`;
-const COLOUR = [
-  [7, "White"], [14, "Colour 1"], [21, "Colour 2"], [28, "Colour 3"], [35, "Colour 4"], [42, "Colour 5"],
-  [49, "Colour 6"], [56, "Colour 7"], [66, "White + C1"], [76, "C1 + C2"], [86, "C2 + C3"], [96, "C3 + C4"],
-  [106, "C4 + C5"], [116, "C5 + C6"], [127, "C6 + C7"],
-  [189, (v) => `Rotate ${pct(189 - v, 0, 61)} fast`], [193, "Rotation stop"], [255, (v) => `Rotate ${pct(v, 194, 255)} fast`],
-];
+// the colour wheel: white + 7 colours, as the integration says they look (live data `colours`)
+let WHEEL = ["White", "Colour 1", "Colour 2", "Colour 3", "Colour 4", "Colour 5", "Colour 6", "Colour 7"].map((name) => ({ name, hex: "#ffffff" }));
+// channel 5 -> the wheel slot(s) lit: one slot (0-56), two halves (57-127), or turning (128-255: slot by time)
+const wheelSlots = (v) => {
+  if (v <= 56) return [v <= 7 ? 0 : Math.min(7, Math.ceil((v - 7) / 7))];
+  if (v <= 127) { const k = Math.min(6, Math.floor((v - 57) / 10)); return [k, k + 1]; }
+  return null;
+};
+const colourName = (v) => {
+  const slots = wheelSlots(v);
+  if (slots) return slots.map((i) => WHEEL[i].name).join(" + ");
+  return range(v, [[189, (x) => `Rotate ${pct(189 - x, 0, 61)} fast`], [193, "Rotation stop"], [255, (x) => `Rotate ${pct(x, 194, 255)} fast`]]);
+};
+// CSS background for the dot: the colour, half and half when split, cycling while the wheel turns
+const colourCss = (v) => {
+  const slots = wheelSlots(v) || [Math.floor(performance.now() / 500) % WHEEL.length];
+  const [a, b] = slots.map((i) => WHEEL[i].hex);
+  return { bg: b ? `linear-gradient(90deg, ${a} 50%, ${b} 50%)` : a, glow: a };
+};
 const GOBO = [
   [7, "Open"], ...[1, 2, 3, 4, 5, 6, 7].map((g) => [7 + g * 8, `Gobo ${g}`]), [71, "Open"],
   ...[1, 2, 3, 4, 5, 6, 7].map((g) => [71 + g * 8, `Gobo ${g} shake`]),
@@ -37,7 +50,7 @@ const CHANNELS = [
   { label: "Pan fine", decode: () => "" },
   { label: "Tilt", decode: (v) => `${Math.round((v / 255) * 270)}°` },
   { label: "Tilt fine", decode: () => "" },
-  { label: "Colour", decode: (v) => range(v, COLOUR) },
+  { label: "Colour", decode: (v) => colourName(v) },
   { label: "Gobo", decode: (v) => range(v, GOBO) },
   { label: "Shutter", decode: (v) => range(v, SHUTTER) },
   { label: "Dimmer", decode: (v) => pct(v) },
@@ -274,6 +287,7 @@ class BeatDmxCard extends HTMLElement {
       return;
     }
     this._d = d;
+    if (Array.isArray(d.colours) && d.colours.length === 8) WHEEL = d.colours;
     e.card.classList.toggle("manual", !!d.manual);
     e.manual.classList.toggle("active", !!d.manual);
     e.state.textContent = d.manual ? "Manual DMX" : d.active ? "Driving" : d.enabled ? "Waiting for music" : "Beat sync off";
@@ -409,8 +423,10 @@ class BeatDmxCard extends HTMLElement {
     ui.dot.style.left = `${(v[0] / 255) * 100}%`;
     ui.dot.style.top = `${(v[2] / 255) * 100}%`;
     ui.dot.style.opacity = String(0.25 + 0.75 * level);
-    ui.dot.style.boxShadow = level > 0 ? `0 0 ${4 + 16 * level}px rgba(255,255,255,${level})` : "none";
-    ui.padlabel.textContent = `${range(v[4], COLOUR)} · ${range(v[5], GOBO)}`;
+    const col = colourCss(v[4]);
+    ui.dot.style.background = col.bg;
+    ui.dot.style.boxShadow = level > 0 ? `0 0 ${4 + 16 * level}px ${col.glow}` : "none";
+    ui.padlabel.textContent = `${colourName(v[4])} · ${range(v[5], GOBO)}`;
   }
 }
 

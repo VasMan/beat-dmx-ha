@@ -15,7 +15,7 @@ from homeassistant.helpers.storage import Store
 
 from .bpm import BpmLookup, track_key
 from .const import (CH_COLOUR, CH_DIM_MODE, CH_DIMMER, CH_FUNCTION, CH_GOBO, CH_PAN, CH_PAN_FINE,
-                    CH_PT_SPEED, CH_SHUTTER, CH_TILT, CH_TILT_FINE, CHANNEL_COUNT, COLOURS,
+                    CH_PT_SPEED, CH_SHUTTER, CH_TILT, CH_TILT_FINE, CHANNEL_COUNT, COLOUR_WHEEL, COLOURS,
                     DIM_MODE_STANDARD, DOMAIN, FUNCTION_NONE, GOBOS, PROGRAMS, PT_SPEED_FAST, SHUTTER_OPEN,
                     SPEEDS, STROBE_FAST, STROBE_SLOW)
 from .motion import COORDINATION, DEFAULT_CAL, SHAPES, aim_to_dmx, zone_point, zone_to_angles
@@ -440,6 +440,7 @@ class BeatEngine:
                 "beat": round((loop.time() - self._anchor) * self.bpm / 60, 3) if self.playing else None,
                 "program": self.program, "speed": self.speed, "shape": self.shape, "coordination": self.coordination,
                 "zone": {"width": self.zone_width, "low": self.zone_low, "high": self.zone_high},
+                "colours": [{"name": n, "hex": h} for n, h in COLOUR_WHEEL],
                 "player": self.now.player or None, "artist": self.now.artist or None, "title": self.now.title or None,
                 "fixtures": fixtures}
 
