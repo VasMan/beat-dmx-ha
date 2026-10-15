@@ -1,10 +1,10 @@
 """Beat DMX: drives Art-Net fixtures to the tempo of whatever Music Assistant is playing."""
 from __future__ import annotations
 
+import logging
+import shutil
 from pathlib import Path
 
-from homeassistant.components.frontend import add_extra_js_url
-from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
@@ -16,9 +16,13 @@ from .const import (CONF_DEFAULT_BPM, CONF_FIXTURES, CONF_GETSONGBPM_KEY, DEFAUL
                     DOMAIN)
 from .engine import BeatEngine
 
+_LOGGER = logging.getLogger(__name__)
+
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
-CARD_URL = f"/{DOMAIN}/beat-dmx-card.js"
-CARD_VERSION = 7
+# the card is copied to <config>/www/beat_dmx/ and loaded as a Lovelace resource: both exist from the
+# moment Home Assistant starts, so a dashboard opened during start-up still finds the card
+CARD_URL = f"/local/{DOMAIN}/beat-dmx-card.js"
+CARD_VERSION = 8
 
 PLATFORMS = [Platform.SWITCH, Platform.SENSOR, Platform.SELECT, Platform.NUMBER, Platform.BUTTON]
 
@@ -26,13 +30,38 @@ BeatConfigEntry = ConfigEntry[BeatEngine]
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """The live-values websocket and the dashboard card (custom:beat-dmx-card) are served by the integration."""
+    """The live-values websocket, the services and the dashboard card (custom:beat-dmx-card)."""
     websocket.async_register(hass)
     services.async_register(hass)
-    await hass.http.async_register_static_paths(
-        [StaticPathConfig(CARD_URL, str(Path(__file__).parent / "www" / "beat-dmx-card.js"), False)])
-    add_extra_js_url(hass, f"{CARD_URL}?v={CARD_VERSION}")
+    await hass.async_add_executor_job(_copy_card, hass.config.path("www", DOMAIN))
+    try:
+        await _register_card(hass, f"{CARD_URL}?v={CARD_VERSION}")
+    except Exception as err:  # the card can still be added as a resource by hand
+        _LOGGER.warning("Could not add the Beat DMX card as a Lovelace resource (%s); add %s (JavaScript module) "
+                        "under Settings > Dashboards > Resources", err, CARD_URL)
     return True
+
+
+def _copy_card(folder: str) -> None:
+    source, target = Path(__file__).parent / "www" / "beat-dmx-card.js", Path(folder) / "beat-dmx-card.js"
+    if not target.exists() or target.read_bytes() != source.read_bytes():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+
+
+async def _register_card(hass: HomeAssistant, url: str) -> None:
+    """Add the card to the Lovelace resources, or point the existing entry at this version."""
+    resources = hass.data["lovelace"].resources
+    if not hasattr(resources, "async_create_item"):
+        raise RuntimeError("Lovelace resources are in YAML mode")
+    if not resources.loaded:
+        await resources.async_load()
+        resources.loaded = True
+    mine = [r for r in resources.async_items() if r["url"].split("?")[0] == CARD_URL]
+    if not mine:
+        await resources.async_create_item({"res_type": "module", "url": url})
+    elif mine[0]["url"] != url:
+        await resources.async_update_item(mine[0]["id"], {"res_type": "module", "url": url})
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: BeatConfigEntry) -> bool:

@@ -84,7 +84,7 @@ fixtures:            # optional: show these first, in this order
 layout: stacked      # optional: fixtures under each other instead of side by side
 ```
 
-No Lovelace resource is needed; the card is loaded automatically. It shows where the tempo was found,
+The integration copies the card to `www/beat_dmx/` and adds it to the Lovelace resources itself (storage-mode dashboards; in YAML mode add `/local/beat_dmx/beat-dmx-card.js` as a JavaScript module). It shows where the tempo was found,
 and with Manual DMX on its bars become sliders, the pan/tilt pad can be dragged and each head calibrated.
 
 ## Services

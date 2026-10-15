@@ -1,5 +1,5 @@
-// Beat DMX live view: the DMX values going out to each fixture Beat DMX controls, pushed ~10x/s
-// over the websocket (beat_dmx/subscribe). Channel meanings: BeamZ Panther 40 LED Spot, 11-channel mode.
+// Beat DMX live view: the DMX values going out to each fixture Beat DMX controls, pushed ~5x/s
+// over the websocket (beat_dmx/subscribe). Loaded as the Lovelace resource /local/beat_dmx/beat-dmx-card.js (copied there by the integration). Channel meanings: BeamZ Panther 40 LED Spot, 11-channel mode.
 // Options: fixtures: [prefix, ...] shows those fixtures in that order (others after them);
 //          layout: stacked puts the fixtures under each other instead of side by side;
 //          manual_entity: the Manual DMX switch (switch.beat_dmx_manual_dmx by default).
