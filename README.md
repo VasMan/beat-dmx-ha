@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/logo-dark.png">
+  <img src="docs/logo.png" alt="Beat DMX" width="320">
+</picture>
+
 # Beat DMX
 
 A Home Assistant integration that moves DMX fixtures to the tempo of whatever
