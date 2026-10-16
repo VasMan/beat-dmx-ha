@@ -32,7 +32,7 @@ FPS = 25
 TAP_RESET_SECONDS = 2.0
 SETTINGS = ("enabled", "program", "speed", "intensity", "bpm_override", "shape", "coordination", "colour_mode",
             "blackout", "blackout_on_silence", "strobe", "strobe_colour",
-            "section_show", "section_actions", "peak_action", "quiet_action", "drop_burst_beats",
+            "section_show", "section_actions", "peak_action", "quiet_action", "drop_burst_beats", "sync_offset",
             "zone_width", "zone_low", "zone_high", "calibration")
 
 
@@ -121,6 +121,7 @@ class BeatEngine:
         self.peak_action = "Strobe"
         self.quiet_action = "Dark"  # quiet moments anywhere in a track
         self.drop_burst_beats = 4.0  # strobe on the first beats of every drop
+        self.sync_offset = 0.0  # ms the speakers play behind (+) what Music Assistant reports: lights wait as long
         self.music_folder = music_folder.strip()
         self.library = Library(hass.config.path(DOMAIN, "analysis")) if hass else None
         self.scan = {"running": False, "done": 0, "total": 0, "current": None, "errors": 0}
@@ -150,7 +151,7 @@ class BeatEngine:
         await self.hass.async_add_executor_job(self.library.load)
         self._tasks.append(self.hass.async_create_background_task(self._poll_loop(), f"{DOMAIN} poll"))
         if self.music_folder:
-            self._tasks.append(self.hass.async_create_background_task(self.analyse_folder(), f"{DOMAIN} analyse"))
+            self._tasks.append(self.hass.async_create_background_task(self._analyse_later(), f"{DOMAIN} analyse"))
 
     async def async_stop(self) -> None:
         for task in [*self._tasks, self._render_task, self._lookup_task]:
@@ -176,6 +177,8 @@ class BeatEngine:
     # ---- settings called by entities -------------------------------------------------------
     def set(self, name: str, value) -> None:
         setattr(self, name, value)
+        if name == "sync_offset":
+            self._align_beats()
         self._save()
         self._update_render()
         self._notify()
@@ -184,7 +187,12 @@ class BeatEngine:
     def bpm(self) -> float:
         if self.bpm_override:
             return float(self.bpm_override)
-        return self.tap_bpm or self.looked_up_bpm or float(self.default_bpm)
+        return self.tap_bpm or self.measured_bpm or self.looked_up_bpm or float(self.default_bpm)
+
+    @property
+    def measured_bpm(self) -> float | None:
+        """The tempo measured from the playing track's own audio (its analysis), if there is one."""
+        return (self.analysis or {}).get("bpm")
 
     @property
     def source(self) -> str:
@@ -192,6 +200,8 @@ class BeatEngine:
             return "manual"
         if self.tap_bpm:
             return "tap"
+        if self.measured_bpm:
+            return "analysis"
         if self.looked_up_bpm:
             return self.bpm_source
         return f"default ({self.bpm_source})" if self.playing else "default"
@@ -365,6 +375,7 @@ class BeatEngine:
             # keep the track position in step (seeks, pauses, the odd hiccup)
             if abs((loop_now - self._track_t0) - position) > 1.5:
                 self._track_t0 = loop_now - position
+                self._align_beats()
         self.now.duration = float(media.get("duration") or 0)
         self._update_render()
         self._notify()
@@ -418,14 +429,24 @@ class BeatEngine:
             found = await self.hass.async_add_executor_job(find_sections, prof)
             duration = prof.get("duration") or now.duration or len(prof["rms"]) * prof["frame"]
             self.analysis = {"id": now.key, "source": prof.get("source"), "duration": duration,
-                             "timeline": timeline(prof), **found}
+                             "timeline": timeline(prof), "bpm": prof.get("bpm"), "beat0": prof.get("beat0"), **found}
+            self._align_beats()
             _LOGGER.info("Sections of %s - %s (%s): %s", now.artist, now.title, prof.get("source"),
                          ", ".join(f"{s['type']} {s['start']:.0f}s" for s in found["sections"]))
         self._notify()
 
+    def _align_beats(self) -> None:
+        """With a measured tempo the beat count starts on the track's real first beat (a tap wins)."""
+        a = self.analysis or {}
+        if a.get("bpm") and a.get("beat0") is not None and not self.tap_bpm and not self.bpm_override:
+            self._anchor = self._track_t0 + a["beat0"] + self.sync_offset / 1000
+
     @property
     def position(self) -> float | None:
-        return asyncio.get_running_loop().time() - self._track_t0 if self.playing else None
+        """Where the speakers are in the playing track (seconds), allowing for the sync offset."""
+        if not self.playing:
+            return None
+        return asyncio.get_running_loop().time() - self._track_t0 - self.sync_offset / 1000
 
     def _section(self) -> tuple[dict | None, bool]:
         """The section playing now, and whether a peak is."""
@@ -439,6 +460,12 @@ class BeatEngine:
         """A quiet moment playing now (the music goes near-silent, anywhere in the track)."""
         t, a = self.position, self.analysis
         return t is not None and bool(a) and any(q0 <= t < q1 for q0, q1 in a.get("quiet") or [])
+
+    async def _analyse_later(self) -> None:
+        await asyncio.sleep(60)  # (not while Home Assistant is still starting)
+        while self.scan["running"]:  # (a folder analysed on request goes first)
+            await asyncio.sleep(30)
+        await self.analyse_folder()
 
     async def analyse_folder(self, folder: str | None = None, full: bool = False) -> None:
         """Make profiles of every new or changed audio file under the folder (one at a time)."""
@@ -628,7 +655,7 @@ class BeatEngine:
         steps = max(beats, 0) * SPEEDS.get(self.speed, 1.0) * ramp
         step, frac = int(steps), steps % 1
         program = program or self.program
-        moving = program in ("Full show", "Movement")
+        moving = program in ("Full show", "Movement", "Pulse", "Strobe", "Fast strobe")  # (Colour & gobo holds still)
         chasing = program in ("Full show", "Colour & gobo", "Pulse", "Strobe", "Fast strobe")
 
         # aim inside the zone: moving along the shape, or held in the middle of it

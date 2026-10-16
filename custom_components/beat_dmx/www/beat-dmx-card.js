@@ -65,6 +65,7 @@ const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<
 
 // what the tempo sensor's source means, and whether that counts as found
 const TEMPO_SOURCES = [
+  [/^analysis/, "Measured from the track", "ok"],
   [/^getsongbpm/, "Found on GetSongBPM", "ok"],
   [/^deezer isrc/, "Found on Deezer (exact track)", "ok"],
   [/^deezer search/, "Found on Deezer (search)", "ok"],
@@ -126,6 +127,7 @@ class BeatDmxCard extends HTMLElement {
     this._beatTimer = null;
     if (this._tlTimer) clearInterval(this._tlTimer);
     this._tlTimer = null;
+    if (this._big) this._big.close();
   }
 
   getCardSize() {
@@ -265,7 +267,7 @@ class BeatDmxCard extends HTMLElement {
         .tl { margin: 0 0 14px; }
         .tlhead { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; margin-bottom: 4px; }
         .tlhead #tlsrc { color: var(--bd-muted); font-size: 12px; }
-        .tl canvas { width: 100%; height: 56px; display: block; border-radius: 6px; background: var(--bd-track); }
+        .tl canvas { width: 100%; height: 56px; display: block; border-radius: 6px; background: var(--bd-track); cursor: zoom-in; }
         .tlkey { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11px; color: var(--bd-muted); margin-top: 4px; }
         .tlkey i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
         @media (max-width: 420px) { .row { grid-template-columns: 62px 26px 1fr 28px; } .row .txt { display: none; } }
@@ -287,7 +289,7 @@ class BeatDmxCard extends HTMLElement {
         </dl>
         <div class="tl" id="tl" hidden>
           <div class="tlhead"><span id="tlnow"></span><span id="tlsrc"></span></div>
-          <canvas id="tlc" height="56"></canvas>
+          <canvas id="tlc" height="56" title="Click for a larger view"></canvas>
           <div class="tlkey" id="tlkey"></div>
         </div>
         <div class="err" id="err" hidden></div>
@@ -308,6 +310,7 @@ class BeatDmxCard extends HTMLElement {
       found: $("found"), track: $("track"), show: $("show"), beats: [...$("beats").children],
       fixtures: $("fixtures"), credit: $("credit"), err: $("err"),
       tl: $("tl"), tlnow: $("tlnow"), tlsrc: $("tlsrc"), tlc: $("tlc"), tlkey: $("tlkey") };
+    $("tlc").addEventListener("click", () => this._safe(() => this._openBig()));
     $("tlkey").innerHTML = Object.entries(SECTION_COLOURS).filter(([k]) => k !== "Outro")
       .map(([k, c]) => `<span><i style="background:${c}"></i>${k === "Intro" ? "Intro/outro" : k}</span>`).join("") +
       '<span><i style="background:#fff"></i>Peak</span><span><i style="background:#000;outline:1px solid #666"></i>Quiet moment</span>';
@@ -373,6 +376,7 @@ class BeatDmxCard extends HTMLElement {
     if (tlKey !== this._tlKey) {
       this._tlKey = tlKey;
       this._tl = null;
+      if (this._big) this._big.close(); // (a new track: its own timeline)
       this._hass.connection.sendMessagePromise({ type: "beat_dmx/timeline" })
         .then((tl) => this._safe(() => { if (this._tlKey === tlKey) { this._tl = tl; this._drawTimeline(); } }))
         .catch((err) => this._toast(err));
@@ -385,15 +389,23 @@ class BeatDmxCard extends HTMLElement {
     } else {
       e.tlnow.textContent = `${d.section_show ? "" : "(Section show off) "}Section: ${sec.type || "–"}${sec.peak ? " · PEAK" : ""}${sec.quiet ? " · QUIET" : ""}` +
         (sec.next ? ` · ${sec.next} in ${Math.max(0, Math.round(sec.next_in))} s` : "");
-      e.tlsrc.textContent = sec.source === "file" ? "analysed from the file (with bass)" : "from Music Assistant's analysis";
+      e.tlsrc.textContent = sec.source === "file" ? "" : "from Music Assistant's analysis";
     }
     if (!this._tlTimer) this._tlTimer = setInterval(() => this._safe(() => this._drawTimeline()), 250);
   }
 
   _drawTimeline() {
-    const tl = this._tl, c = this._els && this._els.tlc;
+    if (!this._els) return;
+    this._drawOn(this._els.tlc, 56, false);
+    if (this._big) this._drawOn(this._big.canvas, 280, true);
+  }
+
+  // the timeline on a canvas: section bands, the energy curve, peaks (white), quiet moments (black),
+  // the playhead; `big` adds a time axis and the section names
+  _drawOn(c, h, big) {
+    const tl = this._tl;
     if (!c || !tl || !tl.duration) return;
-    const w = Math.max(100, Math.round(c.clientWidth || 600)), h = 56, dpr = window.devicePixelRatio || 1;
+    const w = Math.max(100, Math.round(c.clientWidth || 600)), dpr = window.devicePixelRatio || 1;
     if (c.width !== w * dpr) { c.width = w * dpr; c.height = h * dpr; }
     const g = c.getContext("2d");
     if (!g) return;
@@ -419,13 +431,63 @@ class BeatDmxCard extends HTMLElement {
     g.fillStyle = "#000";
     (tl.quiet || []).forEach(([a, b]) => g.fillRect(X(a), h - 8, Math.max(2, X(b) - X(a)), 8));
     g.fillStyle = "#fff";
+    if (big) {
+      g.font = "12px sans-serif";
+      g.textBaseline = "top";
+      (tl.sections || []).forEach((s) => {
+        const x0 = X(s.start), x1 = X(s.end);
+        if (x1 - x0 < 46) return;
+        g.fillStyle = "rgba(0,0,0,0.55)";
+        g.fillRect(x0 + 3, 4, Math.min(x1 - x0 - 6, g.measureText(s.type).width + 8), 17);
+        g.fillStyle = "#fff";
+        g.fillText(s.type, x0 + 7, 7);
+      });
+      const step = tl.duration > 1200 ? 300 : tl.duration > 400 ? 60 : 30;
+      g.fillStyle = "rgba(255,255,255,0.8)";
+      g.textBaseline = "bottom";
+      for (let t = step; t < tl.duration; t += step) {
+        g.fillRect(X(t), h - 6, 1, 6);
+        g.fillText(mmss(t), X(t) + 3, h - 1);
+      }
+    }
     const sec = this._sec;
     if (sec && sec.t != null) {
       const t = sec.t + (performance.now() - this._secAt) / 1000;
       g.fillStyle = "#fff";
       g.fillRect(Math.min(w - 2, X(t)), 0, 2, h);
-      this._els.tlsrc.title = `${mmss(t)} / ${mmss(tl.duration)}`;
+      if (!big) this._els.tlsrc.title = `${mmss(t)} / ${mmss(tl.duration)}`;
+      else this._big.now.textContent = `${mmss(t)} / ${mmss(tl.duration)}`;
     }
+  }
+
+  // the large view: a window over the page (on document.body, so nothing in the dashboard clips it)
+  _openBig() {
+    if (!this._tl || this._big) return;
+    const d = this._d || {}, tl = this._tl, bg = "#16181d";
+    const ov = document.createElement("div");
+    ov.style.cssText = "position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;padding:16px;";
+    const sections = (tl.sections || []).map((s) => `<tr><td>${mmss(s.start)}–${mmss(s.end)}</td><td><i style="display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;background:${SECTION_COLOURS[s.type] || "#888"}"></i>${esc(s.type)}</td></tr>`).join("");
+    ov.innerHTML = `
+      <div style="background:${bg};color:#eee;border-radius:14px;width:min(1200px,96vw);max-height:92vh;overflow:auto;padding:18px 20px;font:14px/1.4 var(--paper-font-body1_-_font-family, sans-serif);box-shadow:0 10px 40px rgba(0,0,0,.6)">
+        <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap">
+          <div style="font-size:18px;font-weight:500;flex:1">${esc(d.title ? `${d.artist ? d.artist + " – " : ""}${d.title}` : "Track")}</div>
+          <div style="color:#aaa">${tl.bpm ? `${tl.bpm} BPM · ` : ""}<span data-now></span></div>
+          <button data-close style="font:inherit;background:none;border:1px solid #555;color:#eee;border-radius:14px;padding:3px 12px;cursor:pointer">✕ Close</button>
+        </div>
+        <canvas data-c style="width:100%;height:280px;display:block;border-radius:8px;background:#23262d;margin:12px 0 6px"></canvas>
+        <div style="display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;color:#aaa;margin-bottom:12px">${this._els.tlkey.innerHTML}</div>
+        <table style="border-collapse:collapse;font-size:13px">${sections}</table>
+        <div style="color:#888;font-size:12px;margin-top:8px">${(tl.peaks || []).length} peaks · ${(tl.quiet || []).length} quiet moments</div>
+      </div>`;
+    ov.querySelectorAll("td").forEach((td) => (td.style.padding = "2px 14px 2px 0"));
+    const close = () => { ov.remove(); this._big = null; document.removeEventListener("keydown", onKey); };
+    const onKey = (ev) => { if (ev.key === "Escape") close(); };
+    ov.addEventListener("click", (ev) => { if (ev.target === ov) close(); });
+    ov.querySelector("[data-close]").addEventListener("click", close);
+    document.addEventListener("keydown", onKey);
+    document.body.appendChild(ov);
+    this._big = { el: ov, canvas: ov.querySelector("[data-c]"), now: ov.querySelector("[data-now]"), close };
+    this._drawTimeline();
   }
 
   _tickBeat() {

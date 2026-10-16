@@ -19,10 +19,15 @@ Tempo data is provided by **[GetSongBPM.com](https://getsongbpm.com)**.
 Tempo is looked up in this order:
 
 1. a tempo you tapped in for the track earlier (tap tempo button, remembered per track)
-2. Deezer, by the track's ISRC
-3. the [GetSongBPM API](https://getsongbpm.com/api) (if an API key is configured)
-4. Deezer search (median over matching releases; remixes, covers and acoustic versions are ignored)
-5. a default tempo (120 BPM unless configured)
+2. **measured from the track itself** when it is in your analysed music folder (see Section show):
+   the exact BPM and where the first beat falls, so the show runs on the real beats
+3. Deezer, by the track's ISRC
+4. the [GetSongBPM API](https://getsongbpm.com/api) (if an API key is configured)
+5. Deezer search (median over matching releases; remixes, covers and acoustic versions are ignored)
+6. a default tempo (120 BPM unless configured)
+
+*Sync offset* (ms) shifts the lights to match speakers that play behind what Music Assistant reports
+(AirPlay, Sonos groups).
 
 ## Requirements
 

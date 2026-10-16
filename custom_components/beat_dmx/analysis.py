@@ -1,8 +1,10 @@
 """Track analysis: energy curves of audio files (ffmpeg), stored per track, and the sections found in them.
 
 A profile is two curves at 10 frames a second, 0-255: `rms` (the whole signal) and `bass` (below
-~150 Hz). Profiles of local files are made here with ffmpeg; for anything else Music Assistant's
-waveform (1800 RMS bins over the track, no bass) is used when it has analysed the track.
+~150 Hz), plus the tempo (`bpm`) and where the first beat falls (`beat0`, seconds), measured from
+the onsets at 100 frames a second. Profiles of local files are made here with ffmpeg; for anything
+else Music Assistant's waveform (1800 RMS bins over the track, no bass, no tempo) is used when it has
+analysed the track.
 """
 from __future__ import annotations
 
@@ -20,6 +22,8 @@ from .bpm import track_key
 _LOGGER = logging.getLogger(__name__)
 
 FRAME = 0.1  # seconds per profile frame
+ONSET_FPS = 100  # frames a second for the tempo
+VERSION = 2  # profiles older than this are made again (2: tempo and first beat)
 RATE = 8000  # decode sample rate
 AUDIO = (".mp3", ".flac", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".aiff", ".aif", ".wma", ".alac")
 SECTIONS = ["Intro", "Main", "Breakdown", "Build-up", "Quiet gap", "Drop", "Outro"]
@@ -39,7 +43,8 @@ def _probe(path: str) -> dict:
 
 
 def profile_file(path: str) -> dict:
-    """Decode a file to mono 8 kHz (and a bass-only copy) and measure both every 0.1 s."""
+    """Decode a file to mono 8 kHz (and a bass-only copy), measure both every 10 ms; from that the
+    0.1 s energy curves and the tempo."""
     info = _probe(path)
     graph = (f"[0:a:0]aresample={RATE},aformat=channel_layouts=mono,asplit[a][b];"
              "[b]lowpass=f=150,lowpass=f=150[lo];[a][lo]amerge=inputs=2[out]")
@@ -49,24 +54,109 @@ def profile_file(path: str) -> dict:
     if proc.returncode or not proc.stdout:
         raise RuntimeError((proc.stderr or b"ffmpeg failed").decode(errors="ignore").strip()[-300:])
     raw = proc.stdout[: len(proc.stdout) // 4 * 4]
-    step = int(RATE * FRAME)  # samples per frame (and channel)
+    step = RATE // ONSET_FPS  # samples per 10 ms frame (and channel)
     try:  # numpy when Home Assistant has it: many times faster
         import numpy as np  # noqa: PLC0415
 
         pcm = np.frombuffer(raw, dtype="<i2").astype(np.float64).reshape(-1, 2)
         frames = len(pcm) // step
         sq = (pcm[: frames * step] ** 2).reshape(frames, step, 2).mean(axis=1)
-        rms, bass = np.sqrt(sq[:, 0]).tolist(), np.sqrt(sq[:, 1]).tolist()
+        full_ms, bass_ms = sq[:, 0].tolist(), sq[:, 1].tolist()  # mean squares per 10 ms
     except ImportError:
         pcm = array.array("h")
         pcm.frombytes(raw)
-        rms, bass = [], []
+        full_ms, bass_ms = [], []
         for i in range(0, len(pcm) - 2 * step + 1, 2 * step):  # interleaved: full, bass
             chunk = pcm[i:i + 2 * step]
-            full, low = chunk[0::2], chunk[1::2]
-            rms.append(math.sqrt(sum(x * x for x in full) / len(full)))
-            bass.append(math.sqrt(sum(x * x for x in low) / len(low)))
-    return {**info, "rms": _scale(rms), "bass": _scale(bass), "frame": FRAME, "source": "file"}
+            full_ms.append(sum(x * x for x in chunk[0::2]) / step)
+            bass_ms.append(sum(x * x for x in chunk[1::2]) / step)
+    group = round(FRAME * ONSET_FPS)
+    rms = [math.sqrt(sum(full_ms[i:i + group]) / group) for i in range(0, len(full_ms) - group + 1, group)]
+    bass = [math.sqrt(sum(bass_ms[i:i + group]) / group) for i in range(0, len(bass_ms) - group + 1, group)]
+    tempo = measure_tempo(full_ms, bass_ms)
+    return {**info, "rms": _scale(rms), "bass": _scale(bass), "frame": FRAME, "source": "file", **tempo}
+
+
+def measure_tempo(full_ms: list[float], bass_ms: list[float], fps: int = ONSET_FPS) -> dict:
+    """Tempo and first beat from 10 ms energies.
+
+    Onsets are rises in log energy (the bass - the kick - counts double). A first tempo comes from
+    how the onsets of the middle two minutes repeat (autocorrelation over 1-4 beats, 80-180 BPM, a
+    slight preference for ~125). If the kicks fall just as strongly half-way between those beats,
+    the tempo is double. Then, over the whole track, the tempo is tuned in 0.01 BPM steps to where
+    the onsets, folded onto one beat, stack up sharpest; that fold also gives the first beat.
+    """
+    def rises(ms: list[float]) -> list[float]:
+        lg = [math.log(v + 1.0) for v in ms]
+        return [max(0.0, lg[i] - lg[i - 1]) for i in range(1, len(lg))]
+    kick = rises(bass_ms)
+    onset = [2 * b + f for b, f in zip(kick, rises(full_ms))]
+    n = len(onset)
+    if n < fps * 20:
+        return {}
+    try:
+        import numpy as np  # noqa: PLC0415
+    except ImportError:
+        np = None
+
+    def fold(values: list[float], period: float) -> list[float]:
+        """The values summed per position within the beat (bins of 10 ms), lightly smoothed."""
+        bins = int(period) + 1
+        if np is not None:
+            idx = (np.arange(len(values)) % period).astype(int)
+            hist = np.bincount(idx, weights=np.asarray(values), minlength=bins).tolist()
+        else:
+            hist = [0.0] * bins
+            for i, v in enumerate(values):
+                hist[int(i % period)] += v
+        return [hist[i - 1] + 2 * hist[i] + hist[(i + 1) % bins] for i in range(bins)]
+
+    # 1. a first tempo from the autocorrelation of the middle two minutes
+    w = min(n, 120 * fps)
+    seg = onset[(n - w) // 2:(n - w) // 2 + w]
+    mean = sum(seg) / w
+    seg = [v - mean for v in seg]
+    lag_max = int(fps * 60 / 80 * 4) + 2
+    if np is not None:
+        a = np.asarray(seg)
+        ac = np.correlate(a, a, "full")[w - 1:w - 1 + lag_max + 1].tolist()
+    else:
+        ac = [sum(seg[i] * seg[i + lag] for i in range(w - lag)) for lag in range(lag_max + 1)]
+    if ac[0] <= 0:
+        return {}
+
+    def at(x: float) -> float:
+        i = int(x)
+        return ac[i] + (ac[i + 1] - ac[i]) * (x - i) if i + 1 < len(ac) else 0.0
+
+    best, best_score, bpm = 80.0, -1e18, 80.0
+    while bpm <= 180.0:
+        period = fps * 60 / bpm
+        score = sum(at(k * period) * wt for k, wt in ((1, 1.0), (2, 0.6), (3, 0.3), (4, 0.4)))
+        score *= math.exp(-0.5 * (math.log2(bpm / 125) / 1.2) ** 2)
+        if score > best_score:
+            best, best_score = bpm, score
+        bpm += 0.05
+
+    # 2. half or double: kicks as strong half-way between the beats mean the beats are twice as fast
+    if best * 2 <= 190:
+        period = fps * 60 / best
+        h = fold(kick, period)
+        top = max(range(len(h)), key=h.__getitem__)
+        if h[int((top + period / 2) % period)] >= 0.6 * h[top]:
+            best *= 2
+
+    # 3. tune over the whole track: the sharpest fold
+    def sharpness(bpm_: float) -> tuple[float, int]:
+        h = fold(onset, fps * 60 / bpm_)
+        top = max(range(len(h)), key=h.__getitem__)
+        return h[top] / (sum(h) / len(h) or 1), top
+    candidates = [best + d / 100 for d in range(-50, 51)]
+    scored = [(sharpness(b), b) for b in candidates]
+    (peak, phase), tuned = max(scored, key=lambda x: x[0][0])
+    period = fps * 60 / tuned
+    return {"bpm": round(tuned, 2), "beat0": round(((phase + 1) % period) / fps, 3),
+            "bpm_confidence": round(min(1.0, (peak - 1) / 4), 3)}
 
 
 def _scale(values: list[float]) -> list[int]:
@@ -83,7 +173,7 @@ class Library:
 
     def __init__(self, folder: str) -> None:
         self.folder = Path(folder)
-        self.index: dict[str, dict] = {}  # file path -> {"key", "mtime", "file"}
+        self.index: dict[str, dict] = {}  # file path -> {"key", "mtime", "file", "v"}
         self.by_key: dict[str, str] = {}  # track key -> profile file name
 
     def load(self) -> None:
@@ -110,7 +200,8 @@ class Library:
                         mtime = os.path.getmtime(path)
                     except OSError:
                         continue
-                    if self.index.get(path, {}).get("mtime") != mtime:
+                    known = self.index.get(path, {})
+                    if known.get("mtime") != mtime or known.get("v", 1) < VERSION:
                         files.append(path)
         return sorted(files)
 
@@ -119,7 +210,7 @@ class Library:
         name = hashlib.sha1(path.encode()).hexdigest()[:16] + ".json"
         (self.folder / name).write_text(json.dumps(prof))
         key = track_key(prof["artist"], prof["title"])
-        self.index[path] = {"key": key, "mtime": os.path.getmtime(path), "file": name}
+        self.index[path] = {"key": key, "mtime": os.path.getmtime(path), "file": name, "v": VERSION}
         self.by_key[key] = name
         return prof
 
