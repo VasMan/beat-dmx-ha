@@ -151,21 +151,28 @@ def _smooth(values: list[float], half: int) -> list[float]:
     return out
 
 
+def _norm(values: list[float]) -> list[float]:
+    """Relative to the curve's own loud level (its 95th percentile): kick-heavy tracks reach 1 too."""
+    ref = sorted(values)[int(len(values) * 0.95)] or 1
+    return [v / ref for v in values]
+
+
 def find_sections(prof: dict) -> dict:
     """Sections ({start, end, type} in seconds) and peaks ([start, end]) of a profile.
 
     Drops are where the energy (bass when there is a bass curve) jumps back to full after at least
     8 s low; the low stretch before a drop is a breakdown, its rising last part the build-up, and a
     near-silence in the last 3 s before the drop the quiet gap. Full stretches that are not drops are
-    Main; a low start / end is Intro / Outro. Peaks: moments well above the loud level around them.
+    Main; a low start / end is Intro / Outro. Peaks: moments well above the loud level around them;
+    quiet moments: near-silences of 0.3 s or more anywhere but the first and last 2 s.
     """
     dt = prof["frame"]
     rms = [v / 200 for v in prof["rms"]]
     energy = [v / 200 for v in prof["bass"]] if prof.get("bass") else rms
     n = len(energy)
     if n < 20:
-        return {"sections": [], "peaks": []}
-    e1 = _smooth(energy, max(1, int(1 / dt)))
+        return {"sections": [], "peaks": [], "quiet": []}
+    e1 = _norm(_smooth(energy, max(1, int(1 / dt))))
     # full / low with hysteresis, then stretches of at least 6 s
     state, states = e1[0] > 0.55, []
     for v in e1:
@@ -201,16 +208,19 @@ def find_sections(prof: dict) -> dict:
         if j == len(merged) - 1:
             out.append({"start": t0, "end": t1, "type": "Outro"})
             continue
+        if t1 - t0 < 8:  # a short dip: just a breakdown (what follows is no drop)
+            out.append({"start": t0, "end": t1, "type": "Breakdown"})
+            continue
         # a low stretch between full ones: breakdown, then build-up, then maybe a quiet gap
         gap_start = t1
-        r1 = _smooth(rms, max(1, int(0.3 / dt)))
+        r1 = _norm(_smooth(rms, max(1, int(0.3 / dt))))
         k = b - 1
         while k > max(a, b - int(3 / dt)) and r1[k] < 0.12:
             k -= 1
         if (b - 1 - k) * dt >= 0.3:
             gap_start = (k + 1) * dt
         # build-up: from where the energy last started climbing (at most 30 s, at least 4 s)
-        rs = _smooth(rms, max(1, int(2 / dt)))
+        rs = _norm(_smooth(rms, max(1, int(2 / dt))))
         k = int(gap_start / dt) - 1
         lo = max(a, k - int(30 / dt))
         while k > lo and rs[k - int(1 / dt)] <= rs[k] + 0.01:
@@ -238,7 +248,23 @@ def find_sections(prof: dict) -> dict:
             start = None
     for s in out:
         s["start"], s["end"] = round(s["start"], 2), round(s["end"], 2)
-    return {"sections": out, "peaks": peaks[:200]}
+    # quiet moments: the music all but stops (under 10% of its loud level over half a second) for
+    # 0.4-8 s - not the gaps between kicks, not a whole quiet section, not in an intro or outro
+    r05 = _norm(_smooth(rms, max(1, int(0.25 / dt))))
+    ends = [(s["start"], s["end"]) for s in out if s["type"] in ("Intro", "Outro")]
+    quiet, start = [], None
+    for i, v in enumerate(r05 + [1.0]):
+        hush = v < 0.1
+        if hush and start is None:
+            start = i
+        elif not hush and start is not None:
+            a, b = start * dt, i * dt
+            if quiet and a - quiet[-1][1] < 0.5:  # (one moment, not two)
+                a = quiet.pop()[0]
+            if 0.4 <= b - a <= 8 and b < n * dt - 1 and not any(e0 <= a < e1_ for e0, e1_ in ends):
+                quiet.append([round(a, 2), round(b, 2)])
+            start = None
+    return {"sections": out, "peaks": peaks[:200], "quiet": quiet[:200]}
 
 
 def timeline(prof: dict, points: int = 300) -> list[int]:

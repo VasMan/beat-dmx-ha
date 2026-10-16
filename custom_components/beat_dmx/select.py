@@ -23,6 +23,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: BeatConfigEntry, add: Ad
          BeatSelect(engine, "strobe_colour", "Strobe colour", [STROBE_PROGRAM_COLOUR, *(n for n, _ in COLOUR_WHEEL)],
                     "mdi:flash-outline"),
          BeatSelect(engine, "peak_action", "Section: Peaks", PEAK_ACTIONS, "mdi:chart-bell-curve"),
+         BeatSelect(engine, "quiet_action", "Section: Quiet moments", PEAK_ACTIONS, "mdi:volume-mute"),
          *(SectionSelect(engine, s) for s in SECTIONS)])
 
 

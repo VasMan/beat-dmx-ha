@@ -23,7 +23,7 @@ CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 # the card is copied to <config>/www/beat_dmx/ and loaded as a Lovelace resource: both exist from the
 # moment Home Assistant starts, so a dashboard opened during start-up still finds the card
 CARD_URL = f"/local/{DOMAIN}/beat-dmx-card.js"
-CARD_VERSION = 12
+CARD_VERSION = 13
 
 PLATFORMS = [Platform.SWITCH, Platform.SENSOR, Platform.SELECT, Platform.NUMBER, Platform.BUTTON]
 

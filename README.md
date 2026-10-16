@@ -87,7 +87,8 @@ Then Settings → Devices & services → Add integration → **Beat DMX**, and e
 ## Section show (build-ups, drops, peaks)
 
 Beat DMX knows the sections of a track before they play: Intro, Main, Breakdown, Build-up, Quiet gap
-(the near-silence just before a drop), Drop and Outro, plus short Peaks. With **Section show** on, each
+(the near-silence just before a drop), Drop and Outro, plus short Peaks and Quiet moments (the music all but
+stops for 0.4-8 s, anywhere). With **Section show** on, each
 section can keep the main program, run another program, strobe over it or go dark; peaks can strobe
 or go dark, every drop starts with a strobe burst (*Drop strobe beats*), and the step speed doubles
 through a build-up. An event `beat_dmx_section` fires on every change, for automations.

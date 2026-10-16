@@ -310,7 +310,7 @@ class BeatDmxCard extends HTMLElement {
       tl: $("tl"), tlnow: $("tlnow"), tlsrc: $("tlsrc"), tlc: $("tlc"), tlkey: $("tlkey") };
     $("tlkey").innerHTML = Object.entries(SECTION_COLOURS).filter(([k]) => k !== "Outro")
       .map(([k, c]) => `<span><i style="background:${c}"></i>${k === "Intro" ? "Intro/outro" : k}</span>`).join("") +
-      '<span><i style="background:#fff"></i>Peak</span>';
+      '<span><i style="background:#fff"></i>Peak</span><span><i style="background:#000;outline:1px solid #666"></i>Quiet moment</span>';
     this._els.manual.addEventListener("click", () => this._safe(() => this._toggleManual()));
     root.getElementById("title").textContent = this._config.title || "Live DMX";
     this._fx = [];
@@ -383,7 +383,7 @@ class BeatDmxCard extends HTMLElement {
       e.tlnow.textContent = "Not analysed yet – the normal show runs";
       e.tlsrc.textContent = "";
     } else {
-      e.tlnow.textContent = `${d.section_show ? "" : "(Section show off) "}Section: ${sec.type || "–"}${sec.peak ? " · PEAK" : ""}` +
+      e.tlnow.textContent = `${d.section_show ? "" : "(Section show off) "}Section: ${sec.type || "–"}${sec.peak ? " · PEAK" : ""}${sec.quiet ? " · QUIET" : ""}` +
         (sec.next ? ` · ${sec.next} in ${Math.max(0, Math.round(sec.next_in))} s` : "");
       e.tlsrc.textContent = sec.source === "file" ? "analysed from the file (with bass)" : "from Music Assistant's analysis";
     }
@@ -416,6 +416,9 @@ class BeatDmxCard extends HTMLElement {
     }
     g.fillStyle = "#fff";
     (tl.peaks || []).forEach(([a]) => g.fillRect(X(a), 0, 2, 6));
+    g.fillStyle = "#000";
+    (tl.quiet || []).forEach(([a, b]) => g.fillRect(X(a), h - 8, Math.max(2, X(b) - X(a)), 8));
+    g.fillStyle = "#fff";
     const sec = this._sec;
     if (sec && sec.t != null) {
       const t = sec.t + (performance.now() - this._secAt) / 1000;

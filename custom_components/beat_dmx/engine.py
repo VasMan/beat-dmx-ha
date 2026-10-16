@@ -20,7 +20,7 @@ from .bpm import BpmLookup, track_key
 from .const import (CH_COLOUR, CH_DIM_MODE, CH_DIMMER, CH_FUNCTION, CH_GOBO, CH_PAN, CH_PAN_FINE,
                     CH_PT_SPEED, CH_SHUTTER, CH_TILT, CH_TILT_FINE, CHANNEL_COUNT, COLOUR_MIX, COLOUR_MODES,
                     COLOUR_OFFSET, COLOUR_WHEEL, COLOURS, DEFAULT_SECTION_ACTIONS, SILENCE_SECONDS,
-                    STROBE_PROGRAM_COLOUR,
+                    STROBE_OVER, STROBE_PROGRAM_COLOUR,
                     DIM_MODE_STANDARD, DOMAIN, FUNCTION_NONE, GOBOS, PROGRAMS, PT_SPEED_FAST, SHUTTER_OPEN,
                     SPEEDS, STROBE_FAST, STROBE_SLOW)
 from .motion import COORDINATION, DEFAULT_CAL, MIX, MIX_SECONDS, SHAPES, aim_to_dmx, zone_point, zone_to_angles
@@ -32,7 +32,7 @@ FPS = 25
 TAP_RESET_SECONDS = 2.0
 SETTINGS = ("enabled", "program", "speed", "intensity", "bpm_override", "shape", "coordination", "colour_mode",
             "blackout", "blackout_on_silence", "strobe", "strobe_colour",
-            "section_show", "section_actions", "peak_action", "drop_burst_beats",
+            "section_show", "section_actions", "peak_action", "quiet_action", "drop_burst_beats",
             "zone_width", "zone_low", "zone_high", "calibration")
 
 
@@ -119,6 +119,7 @@ class BeatEngine:
         self.section_show = False
         self.section_actions = dict(DEFAULT_SECTION_ACTIONS)
         self.peak_action = "Strobe"
+        self.quiet_action = "Dark"  # quiet moments anywhere in a track
         self.drop_burst_beats = 4.0  # strobe on the first beats of every drop
         self.music_folder = music_folder.strip()
         self.library = Library(hass.config.path(DOMAIN, "analysis")) if hass else None
@@ -412,7 +413,7 @@ class BeatEngine:
         if now is not self.now:
             return
         if not prof:
-            self.analysis = {"id": now.key, "source": None, "duration": now.duration, "sections": [], "peaks": [], "timeline": []}
+            self.analysis = {"id": now.key, "source": None, "duration": now.duration, "sections": [], "peaks": [], "quiet": [], "timeline": []}
         else:
             found = await self.hass.async_add_executor_job(find_sections, prof)
             duration = prof.get("duration") or now.duration or len(prof["rms"]) * prof["frame"]
@@ -433,6 +434,11 @@ class BeatEngine:
             return None, False
         peak = any(p0 <= t < p1 for p0, p1 in a.get("peaks") or [])
         return section_at(a["sections"], t), peak
+
+    def _quiet(self) -> bool:
+        """A quiet moment playing now (the music goes near-silent, anywhere in the track)."""
+        t, a = self.position, self.analysis
+        return t is not None and bool(a) and any(q0 <= t < q1 for q0, q1 in a.get("quiet") or [])
 
     async def analyse_folder(self, folder: str | None = None, full: bool = False) -> None:
         """Make profiles of every new or changed audio file under the folder (one at a time)."""
@@ -570,7 +576,8 @@ class BeatEngine:
             self.hass.bus.async_fire(f"{DOMAIN}_section", {"section": kind, "track": f"{self.now.artist} - {self.now.title}"})
             self._notify()
         action = self.section_actions.get(kind, "No change") if kind else "No change"
-        if peak and self.peak_action == "Dark" or action == "Dark":
+        quiet = self._quiet()
+        if (peak and self.peak_action == "Dark") or (quiet and self.quiet_action == "Dark") or action == "Dark":
             return [0] * CHANNEL_COUNT
         program = action if action in PROGRAMS else None
         ramp = 1.0
@@ -578,7 +585,7 @@ class BeatEngine:
             ramp = 1 + min(max((self.position - sec["start"]) / (sec["end"] - sec["start"]), 0), 1)
         frame = self._frame(beats, fx, program, ramp)
         burst = kind == "Drop" and self.position - sec["start"] < self.drop_burst_beats * 60 / self.bpm
-        if action == "Strobe" or burst or (peak and self.peak_action == "Strobe"):
+        if action == STROBE_OVER or burst or (peak and self.peak_action == "Strobe") or (quiet and self.quiet_action == "Strobe"):
             frame = self._strobe(frame)
         return frame
 
@@ -701,7 +708,7 @@ class BeatEngine:
         sec, peak = self._section()
         nxt = next((s for s in a["sections"] if t is not None and s["start"] > t), None)
         return {"id": a["id"], "source": a["source"], "t": round(t, 2) if t is not None else None,
-                "type": sec["type"] if sec else None, "peak": peak,
+                "type": sec["type"] if sec else None, "peak": peak, "quiet": self._quiet(),
                 "next": nxt["type"] if nxt else None, "next_in": round(nxt["start"] - t, 1) if nxt else None}
 
     @property

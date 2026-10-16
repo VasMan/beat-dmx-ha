@@ -34,7 +34,8 @@ DIM_MODE_STANDARD = 0
 
 # Section show: what each section of a track does - the main program ("No change"), another program,
 # a strobe over the main program, or dark
-SECTION_ACTIONS = ["No change", *PROGRAMS, "Strobe", "Dark"]
+STROBE_OVER = "Strobe over program"  # (the "Strobe" program is a program of its own)
+SECTION_ACTIONS = ["No change", *PROGRAMS, STROBE_OVER, "Dark"]
 PEAK_ACTIONS = ["No change", "Strobe", "Dark"]
 DEFAULT_SECTION_ACTIONS = {"Intro": "No change", "Main": "No change", "Breakdown": "Colour & gobo",
                            "Build-up": "Pulse", "Quiet gap": "Dark", "Drop": "Full show", "Outro": "No change"}
